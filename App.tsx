@@ -12,20 +12,37 @@ import { CameraRig } from './components/CameraRig';
 const App: React.FC = () => {
   const [treeState, setTreeState] = useState<TreeState>(TreeState.CHAOS);
   const [zoomFactor, setZoomFactor] = useState(0.5); // 0.5 is default middle ground
+  const [userTextureUrls, setUserTextureUrls] = useState<string[]>([]);
   
   // Use a ref for rotation velocity to avoid re-rendering the whole tree on every frame update from hand
   const handRotationVelocity = useRef(0);
 
-  const toggleState = () => {
-    setTreeState((prev) => (prev === TreeState.CHAOS ? TreeState.FORMED : TreeState.CHAOS));
+  // We keep the toggle capability for the hand controller
+  const handleStateChangeFromHand = (newState: TreeState) => {
+    setTreeState(newState);
   };
+
+  const handleUpload = (files: FileList) => {
+    const urls: string[] = [];
+    Array.from(files).forEach(file => {
+      urls.push(URL.createObjectURL(file));
+    });
+    setUserTextureUrls(urls);
+  };
+
+  const handleGenerate = () => {
+    setTreeState(TreeState.FORMED);
+  };
+
+  // We just pass a dummy toggle to Overlay if needed, or Overlay handles Generate separately
+  const dummyToggle = () => {}; 
 
   return (
     <div className="relative w-full h-screen bg-[#000502]">
       
       {/* Hand Tracking Controller (Invisible/Overlay) */}
       <HandController 
-        onStateChange={setTreeState}
+        onStateChange={handleStateChangeFromHand}
         onZoomChange={setZoomFactor}
         onRotateChange={(vel) => {
           handRotationVelocity.current = vel;
@@ -60,6 +77,7 @@ const App: React.FC = () => {
             <LuxuryTree 
               treeState={treeState} 
               extraRotationVelocity={handRotationVelocity}
+              userTextureUrls={userTextureUrls}
             />
             <GoldDust treeState={treeState} />
         </Suspense>
@@ -77,7 +95,12 @@ const App: React.FC = () => {
       </Canvas>
 
       {/* 2. UI Overlay */}
-      <Overlay currentState={treeState} onToggle={toggleState} />
+      <Overlay 
+        currentState={treeState} 
+        onToggle={dummyToggle} 
+        onUpload={handleUpload}
+        onGenerate={handleGenerate}
+      />
       
     </div>
   );

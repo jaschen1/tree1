@@ -16,6 +16,28 @@ export const GoldDust: React.FC<GoldDustProps> = ({ treeState }) => {
   // Progress tracker for morphing
   const progressRef = useRef(0);
 
+  // Generate a soft glow texture for circular particles
+  const glowTexture = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+        // Radial gradient for soft, glowing circle
+        const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');     // Hot center
+        gradient.addColorStop(0.2, 'rgba(255, 240, 200, 0.8)'); // Warm core
+        gradient.addColorStop(0.5, 'rgba(255, 215, 0, 0.2)');   // Gold glow
+        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');           // Fade out
+        
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, 32, 32);
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }, []);
+
   // Generate Chaos and Target (Spiral) positions
   const data = useMemo(() => {
     const chaos = new Float32Array(COUNT * 3);
@@ -32,10 +54,12 @@ export const GoldDust: React.FC<GoldDustProps> = ({ treeState }) => {
       // 2. TARGET: Double Helix Spiral around the tree
       // Height from -6 to 6
       const h = (Math.random() - 0.5) * 14; 
-      // Tapered radius: wider at bottom
+      
       // Normalize h (-7 to 7) -> 0 (top) to 1 (bottom) approximately
       const relH = (h + 7) / 14; 
-      const radius = relH * 5.5 + 0.5; // Base radius 6, Top radius 0.5
+      
+      // Inverted radius logic: wide bottom, narrow top
+      const radius = (1 - relH) * 5.5 + 0.5; 
       
       const angle = h * 2 + (i % 2 === 0 ? 0 : Math.PI); // Two intertwined spirals
       
@@ -126,11 +150,19 @@ export const GoldDust: React.FC<GoldDustProps> = ({ treeState }) => {
           itemSize={3}
         />
       </bufferGeometry>
+      {/* 
+        Updated Material:
+        - map: Uses the generated radial gradient texture for soft round particles
+        - size: Adjusted (texture creates visual falloff, so size needs to be larger than pixel size)
+        - color: Bright gold
+        - blending: Additive for glow
+      */}
       <pointsMaterial
-        size={0.15}
+        map={glowTexture}
+        size={0.6} 
         color="#FFD700"
-        transparent
-        opacity={0.8}
+        transparent={true}
+        opacity={0.9}
         sizeAttenuation={true}
         blending={THREE.AdditiveBlending}
         depthWrite={false}

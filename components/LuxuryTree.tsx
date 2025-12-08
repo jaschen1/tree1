@@ -1,4 +1,4 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useState, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { TreeState } from '../types';
@@ -7,6 +7,7 @@ import { randomPointInCone, randomPointInSphere } from '../utils/math';
 interface LuxuryTreeProps {
   treeState: TreeState;
   extraRotationVelocity?: React.MutableRefObject<number>;
+  userTextureUrls: string[];
 }
 
 const NEEDLE_COUNT = 12000;
@@ -15,11 +16,35 @@ const TREE_HEIGHT = 12;
 const TREE_RADIUS = 4.5;
 const CHAOS_RADIUS = 15;
 
-export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotationVelocity }) => {
+export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotationVelocity, userTextureUrls }) => {
   const groupRef = useRef<THREE.Group>(null);
   const needlesRef = useRef<THREE.Points>(null);
-  const ornamentsRef = useRef<THREE.InstancedMesh>(null);
   
+  // Refs for InstancedMeshes
+  // 0 is default (no texture), 1+ are for textures
+  const meshRefs = useRef<THREE.InstancedMesh[]>([]);
+
+  // Texture State
+  const [loadedTextures, setLoadedTextures] = useState<THREE.Texture[]>([]);
+
+  // Load textures when URLs change
+  useEffect(() => {
+    if (userTextureUrls.length > 0) {
+      const loader = new THREE.TextureLoader();
+      const promises = userTextureUrls.map(url => 
+        new Promise<THREE.Texture>((resolve) => {
+            loader.load(url, (tex) => {
+                tex.colorSpace = THREE.SRGBColorSpace;
+                resolve(tex);
+            });
+        })
+      );
+      Promise.all(promises).then(textures => setLoadedTextures(textures));
+    } else {
+      setLoadedTextures([]);
+    }
+  }, [userTextureUrls]);
+
   // Physics State (Inertia)
   const velocity = useRef(0);
   
@@ -57,30 +82,60 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     return { chaos, target, colors };
   }, []);
 
-  // 2. Ornaments Data
-  const ornamentData = useMemo(() => {
+  // 2. Ornaments Data & Distribution
+  // We need to re-calculate distribution if textures change
+  const { ornamentData, distribution, counts } = useMemo(() => {
     const data = [];
     const colorPalette = [
       new THREE.Color("#FFD700"), // Gold
       new THREE.Color("#B8860B"), // Dark Gold
-      new THREE.Color("#8B0000"), // Deep Red (Classic luxury accent)
-      new THREE.Color("#FFFFFF"), // Diamond/Light
+      new THREE.Color("#8B0000"), // Deep Red
+      new THREE.Color("#FFFFFF"), // Diamond
     ];
 
+    // Generate basic physics data
     for (let i = 0; i < ORNAMENT_COUNT; i++) {
-      const tPos = randomPointInCone(TREE_HEIGHT, TREE_RADIUS * 0.9); // Slightly inside foliage
+      const tPos = randomPointInCone(TREE_HEIGHT, TREE_RADIUS * 0.9);
       const cPos = randomPointInSphere(CHAOS_RADIUS * 1.2);
       
       data.push({
         tPos,
         cPos,
         color: colorPalette[Math.floor(Math.random() * colorPalette.length)],
-        scale: 0.2 + Math.random() * 0.3,
+        scale: 0.3 + Math.random() * 0.4, 
         phase: Math.random() * Math.PI * 2,
       });
     }
-    return { data };
-  }, []);
+
+    // Distribute among textures
+    // -1 = Default (No texture)
+    // 0..N = Texture Index
+    const dist: { meshIndex: number; localIndex: number }[] = [];
+    const localCounts: number[] = new Array(loadedTextures.length + 1).fill(0); // Index 0 is default, 1..N are textures
+
+    data.forEach((_, i) => {
+        let assignedTextureIndex = -1; // -1 means default mesh (which is index 0 in our arrays)
+        
+        // Probability to get a texture if available
+        if (loadedTextures.length > 0 && Math.random() > 0.3) {
+            assignedTextureIndex = Math.floor(Math.random() * loadedTextures.length);
+        }
+
+        // Map: 
+        // assigned -1 -> mesh index 0
+        // assigned 0 -> mesh index 1
+        // ...
+        const meshIdx = assignedTextureIndex + 1;
+        
+        dist.push({
+            meshIndex: meshIdx,
+            localIndex: localCounts[meshIdx]
+        });
+        localCounts[meshIdx]++;
+    });
+
+    return { ornamentData: data, distribution: dist, counts: localCounts };
+  }, [loadedTextures.length]); // Re-run only if number of textures changes
 
   // Animation Refs
   const currentProgress = useRef(0);
@@ -88,16 +143,15 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
   // --- Animation Loop ---
   useFrame((state, delta) => {
-    if (!groupRef.current || !needlesRef.current || !ornamentsRef.current) return;
+    if (!groupRef.current || !needlesRef.current) return;
 
-    // 1. Handle Morphing Progress
+    // 1. Morphing Progress
     const targetProgress = treeState === TreeState.FORMED ? 1 : 0;
-    // Smooth lerp for state transition
     currentProgress.current = THREE.MathUtils.lerp(currentProgress.current, targetProgress, delta * 1.5);
     const p = currentProgress.current;
     const invP = 1 - p;
 
-    // 2. Animate Needles
+    // 2. Needles
     const positions = needlesRef.current.geometry.attributes.position;
     for (let i = 0; i < NEEDLE_COUNT; i++) {
       const x = needleData.chaos[i * 3] * invP + needleData.target[i * 3] * p;
@@ -107,50 +161,57 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     }
     positions.needsUpdate = true;
 
-    // 3. Animate Ornaments (InstancedMesh)
-    ornamentData.data.forEach((orn, i) => {
-        // Interpolate position
+    // 3. Ornaments
+    // Loop through all data, calculate physics, then update the correct mesh instance
+    ornamentData.forEach((orn, i) => {
+        // Physics
         const x = orn.cPos.x * invP + orn.tPos.x * p;
         const y = orn.cPos.y * invP + orn.tPos.y * p;
         const z = orn.cPos.z * invP + orn.tPos.z * p;
         
         dummyObj.position.set(x, y, z);
         
-        // Add subtle rotation to ornaments
         dummyObj.rotation.set(
             Math.sin(state.clock.elapsedTime + orn.phase) * 0.5,
             Math.cos(state.clock.elapsedTime + orn.phase) * 0.5,
             0
         );
         
-        // Scale wobble
         const scaleWobble = orn.scale * (0.9 + Math.sin(state.clock.elapsedTime * 2 + orn.phase) * 0.1);
         dummyObj.scale.setScalar(scaleWobble);
-        
         dummyObj.updateMatrix();
-        ornamentsRef.current!.setMatrixAt(i, dummyObj.matrix);
-        ornamentsRef.current!.setColorAt(i, orn.color);
-    });
-    ornamentsRef.current.instanceMatrix.needsUpdate = true;
-    if (ornamentsRef.current.instanceColor) ornamentsRef.current.instanceColor.needsUpdate = true;
 
-    // 4. Handle Physics & Rotation
-    
-    // Add external hand velocity if provided
+        // Update specific mesh
+        const { meshIndex, localIndex } = distribution[i];
+        const mesh = meshRefs.current[meshIndex];
+        
+        if (mesh) {
+            mesh.setMatrixAt(localIndex, dummyObj.matrix);
+            
+            // If default mesh (index 0), apply color
+            if (meshIndex === 0) {
+                mesh.setColorAt(localIndex, orn.color);
+            }
+        }
+    });
+
+    // Notify updates for all meshes
+    meshRefs.current.forEach(mesh => {
+        if (mesh) {
+            mesh.instanceMatrix.needsUpdate = true;
+            if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        }
+    });
+
+    // 4. Rotation
     if (extraRotationVelocity) {
         velocity.current += extraRotationVelocity.current;
-        // Dampen external source slightly to prevent infinite buildup from noise
         extraRotationVelocity.current *= 0.8; 
     }
-
-    // Friction / Decay
     velocity.current *= 0.96;
-    
-    // Auto spin if formed and idle
     if (treeState === TreeState.FORMED && Math.abs(velocity.current) < 0.001) {
-        velocity.current += 0.0001; // Gentle ambient spin
+        velocity.current += 0.0001; 
     }
-
     groupRef.current.rotation.y += velocity.current;
   });
 
@@ -162,7 +223,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
           <bufferAttribute
             attach="attributes-position"
             count={NEEDLE_COUNT}
-            array={needleData.chaos} // Initial buffer
+            array={needleData.chaos}
             itemSize={3}
           />
           <bufferAttribute
@@ -181,9 +242,18 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
         />
       </points>
 
-      {/* Ornaments */}
-      <instancedMesh ref={ornamentsRef} args={[undefined, undefined, ORNAMENT_COUNT]}>
-        <sphereGeometry args={[1, 16, 16]} />
+      {/* 
+        Meshes 
+        Index 0: Default (No texture)
+        Index 1..N: Textures
+      */}
+      
+      {/* 0. Default Mesh */}
+      <instancedMesh 
+        ref={el => { if(el) meshRefs.current[0] = el; }} 
+        args={[undefined, undefined, counts[0]]}
+      >
+        <sphereGeometry args={[1, 32, 32]} />
         <meshStandardMaterial 
             metalness={0.9} 
             roughness={0.1} 
@@ -191,6 +261,24 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
             emissiveIntensity={0.2}
         />
       </instancedMesh>
+
+      {/* 1..N Texture Meshes */}
+      {loadedTextures.map((tex, i) => (
+        <instancedMesh
+            key={i}
+            ref={el => { if(el) meshRefs.current[i + 1] = el; }}
+            args={[undefined, undefined, counts[i + 1]]}
+        >
+            <sphereGeometry args={[1, 32, 32]} />
+            <meshStandardMaterial 
+                map={tex}
+                metalness={0.2}
+                roughness={0.5}
+                color="#ffffff"
+            />
+        </instancedMesh>
+      ))}
+
     </group>
   );
 };
