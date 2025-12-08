@@ -18,11 +18,11 @@ const CHAOS_SPREAD_SPEED_THRESHOLD = 0.02;
 
 // Interaction Config
 // Increased thresholds to filter out unconscious jitter
-const ROTATION_THRESHOLD = 0.005; // Was 0.001
-const ZOOM_THRESHOLD = 0.01;      // Was 0.002
+const ROTATION_THRESHOLD = 0.005; 
+const ZOOM_THRESHOLD = 0.01;      
 // Reduced sensitivity for "heavy" feel
-const ROTATION_SENSITIVITY = -15.0; // Was -40.0
-const ZOOM_SENSITIVITY = 1.5;       // Was 4.0
+const ROTATION_SENSITIVITY = -15.0; 
+const ZOOM_SENSITIVITY = 1.5;       
 
 type GestureAction = 'LOCKED_FOCUS' | 'FORM' | 'CHAOS' | 'CONTROL' | 'NONE';
 
@@ -81,7 +81,8 @@ export const HandController: React.FC<HandControllerProps> = ({
 
     return () => {
       if (videoRef.current && videoRef.current.srcObject) {
-        (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach(t => t.stop());
       }
       cancelAnimationFrame(requestRef.current);
     };
@@ -90,13 +91,25 @@ export const HandController: React.FC<HandControllerProps> = ({
   const startWebcam = async () => {
     if (!videoRef.current) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: 320, height: 240, frameRate: 30 } 
-      });
+      // Mobile-friendly constraints:
+      // Do not specify exact width/height to avoid OverconstrainedError on mobile
+      const constraints = {
+        video: {
+            facingMode: "user" 
+        }
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       videoRef.current.srcObject = stream;
+      
+      // Ensure video plays on mobile (sometimes autoPlay is ignored)
+      videoRef.current.onloadedmetadata = () => {
+        videoRef.current?.play().catch(e => console.error("Play error:", e));
+      };
+
       videoRef.current.addEventListener("loadeddata", predictWebcam);
     } catch (err) {
-      console.error("Webcam access denied", err);
+      console.error("Webcam access denied or not supported", err);
     }
   };
 
@@ -106,40 +119,43 @@ export const HandController: React.FC<HandControllerProps> = ({
     const landmarker = handLandmarkerRef.current;
 
     if (video && canvas && landmarker) {
-      if (canvas.width !== video.videoWidth) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-      }
-
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        const startTimeMs = performance.now();
-        const results = landmarker.detectForVideo(video, startTimeMs);
-        
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        const drawingUtils = new DrawingUtils(ctx);
-        if (results.landmarks) {
-          for (const landmarks of results.landmarks) {
-             drawingUtils.drawConnectors(landmarks, HandLandmarker.HAND_CONNECTIONS, {
-                color: '#00ff44', lineWidth: 2
-             });
-             drawingUtils.drawLandmarks(landmarks, {
-                color: '#FFD700', lineWidth: 1, radius: 2
-             });
+      // Handle variable video dimensions from mobile cameras
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+          if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
           }
-        }
 
-        const action = processGestures(results.landmarks);
-        setCurrentAction(action);
-        
-        if (action !== 'NONE') {
-            ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
-            ctx.fillRect(10, 10, 240, 30);
-            ctx.fillStyle = action === 'LOCKED_FOCUS' ? "#ff3366" : "#FFD700";
-            ctx.font = "bold 14px monospace";
-            ctx.fillText(`MODE: ${action}`, 20, 30);
-        }
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            const startTimeMs = performance.now();
+            const results = landmarker.detectForVideo(video, startTimeMs);
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const drawingUtils = new DrawingUtils(ctx);
+            if (results.landmarks) {
+              for (const landmarks of results.landmarks) {
+                drawingUtils.drawConnectors(landmarks, HandLandmarker.HAND_CONNECTIONS, {
+                    color: '#00ff44', lineWidth: 2
+                });
+                drawingUtils.drawLandmarks(landmarks, {
+                    color: '#FFD700', lineWidth: 1, radius: 2
+                });
+              }
+            }
+
+            const action = processGestures(results.landmarks);
+            setCurrentAction(action);
+            
+            if (action !== 'NONE') {
+                ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+                ctx.fillRect(10, 10, 240, 30);
+                ctx.fillStyle = action === 'LOCKED_FOCUS' ? "#ff3366" : "#FFD700";
+                ctx.font = "bold 14px monospace";
+                ctx.fillText(`MODE: ${action}`, 20, 30);
+            }
+          }
       }
     }
     requestRef.current = requestAnimationFrame(predictWebcam);
@@ -156,10 +172,7 @@ export const HandController: React.FC<HandControllerProps> = ({
         pinchState.current.isLocked = false;
         pinchState.current.clickCount = 0;
         onPhotoFocusChange(false);
-        
-        // IMPORTANT: Reset delta tracking so next re-entry doesn't jump
         lastWristPos.current = null;
-        
         handsDistanceHistory.current = [];
         return 'NONE';
     }
@@ -240,9 +253,7 @@ export const HandController: React.FC<HandControllerProps> = ({
     }
 
     // --- 4. CONTROL (SPATIAL DRAG) ---
-    // Use the Wrist position as the main anchor for "grabbing" space.
     const wrist = hand1[0];
-
     let dX = 0;
     let dY = 0;
 
@@ -252,27 +263,16 @@ export const HandController: React.FC<HandControllerProps> = ({
     }
     lastWristPos.current = { x: wrist.x, y: wrist.y };
 
-    // A. ROTATION (Horizontal / X-Axis Drag)
-    // Threshold to filter unconscious jitter
     if (Math.abs(dX) > ROTATION_THRESHOLD) {
         onRotateChange(dX * ROTATION_SENSITIVITY);
     } else {
         onRotateChange(0);
     }
 
-    // B. ZOOM (Vertical / Y-Axis Drag)
-    // Pull Down (Positive dY) -> Zoom IN (Increase Value)
-    // Push Up (Negative dY) -> Zoom OUT (Decrease Value)
-    // Increased threshold for zoom to prevent accidental zooms when rotating
     if (Math.abs(dY) > ZOOM_THRESHOLD) {
-        // dY is positive when moving down (standard screen coords).
         const zoomDelta = dY * ZOOM_SENSITIVITY; 
-        
         currentZoomLevel.current += zoomDelta;
-        
-        // Clamp heavily to 0-1 range
         currentZoomLevel.current = Math.max(0, Math.min(1, currentZoomLevel.current));
-        
         onZoomChange(currentZoomLevel.current);
     }
 

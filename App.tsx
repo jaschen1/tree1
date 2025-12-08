@@ -41,7 +41,7 @@ const App: React.FC = () => {
   const dummyToggle = () => {}; 
 
   return (
-    <div className="relative w-full h-screen bg-[#000502]">
+    <div className="relative w-full h-screen bg-[#000502] overflow-hidden touch-none">
       
       {/* Hand Tracking Controller (Invisible/Overlay) */}
       <HandController 
@@ -98,7 +98,8 @@ const App: React.FC = () => {
         </Suspense>
 
         {/* Post Processing for the "Trump-esque" Glow */}
-        <EffectComposer enableNormalPass={false}>
+        {/* Multisampling disabled (0) to prevent black screen on mobile devices */}
+        <EffectComposer enableNormalPass={false} multisampling={0}>
             <Bloom 
                 luminanceThreshold={0.7} 
                 mipmapBlur 
