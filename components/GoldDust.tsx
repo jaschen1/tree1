@@ -10,25 +10,20 @@ interface GoldDustProps {
 }
 
 export const GoldDust: React.FC<GoldDustProps> = ({ treeState }) => {
-  const { viewport } = useThree();
   const pointsRef = useRef<THREE.Points>(null);
-  
   const progressRef = useRef(0);
 
-  // Generate a soft glow texture for circular particles
   const glowTexture = useMemo(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 32;
     canvas.height = 32;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-        // Radial gradient for soft, glowing circle
         const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');     // Hot center
-        gradient.addColorStop(0.2, 'rgba(255, 240, 200, 0.9)'); // Warm core
-        gradient.addColorStop(0.5, 'rgba(255, 215, 0, 0.3)');   // Gold glow
-        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');           // Fade out
-        
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');     
+        gradient.addColorStop(0.2, 'rgba(255, 240, 200, 0.9)'); 
+        gradient.addColorStop(0.5, 'rgba(255, 215, 0, 0.3)');   
+        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');           
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, 32, 32);
     }
@@ -44,12 +39,10 @@ export const GoldDust: React.FC<GoldDustProps> = ({ treeState }) => {
     const velocities = new Float32Array(COUNT * 3);
     
     for (let i = 0; i < COUNT; i++) {
-      // 1. CHAOS
       chaos[i * 3] = (Math.random() - 0.5) * 30;
       chaos[i * 3 + 1] = (Math.random() - 0.5) * 30;
       chaos[i * 3 + 2] = (Math.random() - 0.5) * 20;
 
-      // 2. TARGET (Spiral)
       const h = (Math.random() - 0.5) * 14; 
       const relH = (h + 7) / 14; 
       const radius = (1 - relH) * 5.5 + 0.5; 
@@ -59,14 +52,9 @@ export const GoldDust: React.FC<GoldDustProps> = ({ treeState }) => {
       target[i * 3 + 1] = h + 1; 
       target[i * 3 + 2] = Math.sin(angle) * radius;
 
-      // Initialize
       current[i * 3] = chaos[i * 3];
       current[i * 3 + 1] = chaos[i * 3 + 1];
       current[i * 3 + 2] = chaos[i * 3 + 2];
-
-      velocities[i * 3] = 0;
-      velocities[i * 3 + 1] = 0;
-      velocities[i * 3 + 2] = 0;
     }
     return { chaos, target, current, velocities };
   }, []);
@@ -75,7 +63,6 @@ export const GoldDust: React.FC<GoldDustProps> = ({ treeState }) => {
     if (!pointsRef.current) return;
 
     const targetP = treeState === TreeState.FORMED ? 1 : 0;
-    // FAST MORPH: Lerp fast
     progressRef.current = THREE.MathUtils.lerp(progressRef.current, targetP, delta * 3.0);
     const p = progressRef.current;
     
@@ -92,26 +79,26 @@ export const GoldDust: React.FC<GoldDustProps> = ({ treeState }) => {
       let py = positionsAttribute.getY(i);
       let pz = positionsAttribute.getZ(i);
 
-      // Physics - Strong springs for snappy movement
-      const springStr = p > 0.5 ? 0.08 : 0.05;
+      // Physics - Very loose springs for slow, floating dust
+      const springStr = 0.01; // Reduced from 0.05
       data.velocities[idx] += (homeX - px) * springStr;
       data.velocities[idx + 1] += (homeY - py) * springStr;
       data.velocities[idx + 2] += (homeZ - pz) * springStr;
 
       if (p > 0.8) {
-        // Slow spiral spin
+        // Microscopic spiral spin
         const angle = Math.atan2(pz, px);
         const tangX = -Math.sin(angle);
         const tangZ = Math.cos(angle);
         
-        data.velocities[idx] += tangX * 0.003;
-        data.velocities[idx + 2] += tangZ * 0.003;
+        data.velocities[idx] += tangX * 0.0005;
+        data.velocities[idx + 2] += tangZ * 0.0005;
       }
 
-      // Normal friction
-      data.velocities[idx] *= 0.90;
-      data.velocities[idx + 1] *= 0.90;
-      data.velocities[idx + 2] *= 0.90;
+      // High friction for suspended feel
+      data.velocities[idx] *= 0.92;
+      data.velocities[idx + 1] *= 0.92;
+      data.velocities[idx + 2] *= 0.92;
 
       px += data.velocities[idx];
       py += data.velocities[idx + 1];

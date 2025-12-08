@@ -16,10 +16,12 @@ export const Overlay: React.FC<OverlayProps> = ({ currentState, onToggle, onUplo
     if (e.target.files && e.target.files.length > 0) {
       setFileCount(e.target.files.length);
       onUpload(e.target.files);
+      // Auto-generate after selecting files
+      onGenerate();
     }
   };
 
-  const handleUploadClick = () => {
+  const handleButtonClick = () => {
     fileInputRef.current?.click();
   };
 
@@ -29,72 +31,48 @@ export const Overlay: React.FC<OverlayProps> = ({ currentState, onToggle, onUplo
       {/* Header */}
       <header className="text-center mt-4 pointer-events-auto">
         <h1 className="text-4xl md:text-6xl text-yellow-500 font-bold tracking-widest uppercase drop-shadow-[0_0_15px_rgba(255,215,0,0.5)]" style={{ fontFamily: '"Cinzel", serif' }}>
-          Christmas Grandeur
+          Merry Christmas
         </h1>
-        <p className="text-emerald-300 text-sm md:text-lg mt-2 tracking-[0.2em] font-light italic" style={{ fontFamily: '"Playfair Display", serif' }}>
-          Interactive Luxury Edition
+        <p className="text-emerald-400 text-sm md:text-lg mt-2 tracking-[0.2em] font-light italic" style={{ fontFamily: '"Playfair Display", serif' }}>
+          Dear. XYZA
         </p>
       </header>
 
-      {/* Controls */}
-      <div className="mb-12 pointer-events-auto flex flex-col items-center gap-6">
+      {/* Button Positioned Above Camera (Bottom Left) */}
+      <div className="pointer-events-auto absolute left-[20px] bottom-[220px]">
+        <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleFileChange} 
+            accept="image/*" 
+            multiple
+            className="hidden" 
+        />
         
-        {/* Upload Section */}
-        <div className="flex flex-col items-center gap-4">
-            <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleFileChange} 
-                accept="image/*" 
-                multiple
-                className="hidden" 
-            />
-            
-            <button
-            onClick={handleUploadClick}
-            className={`
-                relative px-8 py-3 
-                border border-yellow-600/50
-                text-yellow-100 font-serif text-sm tracking-widest uppercase
-                transition-all duration-300 ease-out
-                bg-black/60 backdrop-blur-md
-                hover:bg-yellow-900/40 hover:border-yellow-400 hover:text-white
-                flex items-center gap-2
-            `}
-            >
-              <span>{fileCount > 0 ? `${fileCount} Photos Selected` : "Upload Photos"}</span>
-            </button>
-
-            {/* Generate Button (Main Action) */}
-            <button
-              onClick={onGenerate}
-              disabled={fileCount === 0 && currentState === TreeState.CHAOS} // Optional: allow generating without photos if user just wants the tree
-              className={`
-                relative px-16 py-5
-                border-2 border-yellow-500
-                text-yellow-400 font-bold font-serif text-2xl tracking-[0.2em] uppercase
-                transition-all duration-500 ease-out
-                group overflow-hidden
-                bg-gradient-to-b from-[#0a2f15] to-[#000]
-                hover:text-white hover:border-yellow-200 hover:shadow-[0_0_40px_rgba(255,215,0,0.6)]
-                disabled:opacity-50 disabled:cursor-not-allowed
-              `}
-            >
-              <span className="relative z-10 drop-shadow-md">
-                Generate
-              </span>
-              {/* Shine effect */}
-              <div className="absolute inset-0 bg-yellow-400/20 translate-y-full group-hover:translate-y-0 transition-transform duration-500" />
-            </button>
-        </div>
+        <button
+          onClick={handleButtonClick}
+          className={`
+            relative px-12 py-4
+            border-2 border-yellow-500
+            text-yellow-400 font-bold font-serif text-xl tracking-[0.1em] uppercase
+            transition-all duration-500 ease-out
+            group overflow-hidden rounded-sm
+            bg-gradient-to-r from-[#0a2f15]/90 to-[#000]/90 backdrop-blur-md
+            hover:text-white hover:border-yellow-200 hover:shadow-[0_0_30px_rgba(255,215,0,0.4)]
+          `}
+        >
+          <span className="relative z-10 drop-shadow-md flex items-center gap-2">
+            Upload & Light Up
+          </span>
+          {/* Shine effect */}
+          <div className="absolute inset-0 bg-yellow-400/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+        </button>
       </div>
 
-      {/* Interaction Hint */}
-      <div className="absolute bottom-4 right-4 text-right opacity-60">
-        <p className="text-yellow-200 text-xs font-serif tracking-wider leading-relaxed">
-          <b>Gestures Enabled</b><br/>
-          Pinch to Form &bull; Spread to Scatter<br/>
-          Push Palm to Zoom &bull; Swipe to Spin
+      {/* Footer / Credits */}
+      <div className="absolute bottom-4 right-4 text-right opacity-80">
+        <p className="text-yellow-200/80 text-sm font-serif tracking-widest">
+            Designed by 文弱李工
         </p>
       </div>
     </div>

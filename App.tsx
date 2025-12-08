@@ -5,6 +5,7 @@ import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
 import { TreeState } from './types';
 import { LuxuryTree } from './components/LuxuryTree';
 import { GoldDust } from './components/GoldDust';
+import { AmbientParticles } from './components/AmbientParticles';
 import { Overlay } from './components/Overlay';
 import { HandController } from './components/HandController';
 import { CameraRig } from './components/CameraRig';
@@ -15,10 +16,9 @@ const App: React.FC = () => {
   const [userTextureUrls, setUserTextureUrls] = useState<string[]>([]);
   const [isPhotoFocused, setIsPhotoFocused] = useState(false);
   
-  // Use a ref for rotation velocity to avoid re-rendering the whole tree on every frame update from hand
+  // Ref for Y-axis rotation (spin) velocity
   const handRotationVelocity = useRef(0);
 
-  // We keep the toggle capability for the hand controller
   const handleStateChangeFromHand = (newState: TreeState) => {
     // Lock state changes if focusing photo
     if (isPhotoFocused) return;
@@ -49,9 +49,12 @@ const App: React.FC = () => {
         onZoomChange={(z) => {
             if (!isPhotoFocused) setZoomFactor(z);
         }}
-        onRotateChange={(vel) => {
-          if (!isPhotoFocused) handRotationVelocity.current = vel;
-          else handRotationVelocity.current = 0;
+        onRotateChange={(v) => {
+          if (!isPhotoFocused) {
+              handRotationVelocity.current = v;
+          } else {
+              handRotationVelocity.current = 0;
+          }
         }}
         onPhotoFocusChange={setIsPhotoFocused}
       />
@@ -80,6 +83,9 @@ const App: React.FC = () => {
         <Suspense fallback={null}>
             <Environment preset="lobby" background={false} blur={0.6} />
             
+            {/* Background Layer: Persistent drifting stars */}
+            <AmbientParticles />
+            
             {/* The Main Stars */}
             <LuxuryTree 
               treeState={treeState} 
@@ -87,6 +93,7 @@ const App: React.FC = () => {
               userTextureUrls={userTextureUrls}
               isPhotoFocused={isPhotoFocused}
             />
+            {/* Foreground interactive dust */}
             <GoldDust treeState={treeState} />
         </Suspense>
 
