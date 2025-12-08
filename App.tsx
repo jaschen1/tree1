@@ -13,12 +13,15 @@ const App: React.FC = () => {
   const [treeState, setTreeState] = useState<TreeState>(TreeState.CHAOS);
   const [zoomFactor, setZoomFactor] = useState(0.5); // 0.5 is default middle ground
   const [userTextureUrls, setUserTextureUrls] = useState<string[]>([]);
+  const [isPhotoFocused, setIsPhotoFocused] = useState(false);
   
   // Use a ref for rotation velocity to avoid re-rendering the whole tree on every frame update from hand
   const handRotationVelocity = useRef(0);
 
   // We keep the toggle capability for the hand controller
   const handleStateChangeFromHand = (newState: TreeState) => {
+    // Lock state changes if focusing photo
+    if (isPhotoFocused) return;
     setTreeState(newState);
   };
 
@@ -43,10 +46,14 @@ const App: React.FC = () => {
       {/* Hand Tracking Controller (Invisible/Overlay) */}
       <HandController 
         onStateChange={handleStateChangeFromHand}
-        onZoomChange={setZoomFactor}
-        onRotateChange={(vel) => {
-          handRotationVelocity.current = vel;
+        onZoomChange={(z) => {
+            if (!isPhotoFocused) setZoomFactor(z);
         }}
+        onRotateChange={(vel) => {
+          if (!isPhotoFocused) handRotationVelocity.current = vel;
+          else handRotationVelocity.current = 0;
+        }}
+        onPhotoFocusChange={setIsPhotoFocused}
       />
 
       {/* 1. Canvas Layer */}
@@ -78,6 +85,7 @@ const App: React.FC = () => {
               treeState={treeState} 
               extraRotationVelocity={handRotationVelocity}
               userTextureUrls={userTextureUrls}
+              isPhotoFocused={isPhotoFocused}
             />
             <GoldDust treeState={treeState} />
         </Suspense>

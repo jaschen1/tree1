@@ -1,31 +1,50 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FilesetResolver, HandLandmarker, DrawingUtils } from '@mediapipe/tasks-vision';
+import { FilesetResolver, HandLandmarker, DrawingUtils, NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { TreeState } from '../types';
+import * as THREE from 'three';
 
 interface HandControllerProps {
   onStateChange: (state: TreeState) => void;
-  onZoomChange: (factor: number) => void; // 0 (far) to 1 (close)
+  onZoomChange: (factor: number) => void;
   onRotateChange: (velocity: number) => void;
+  onPhotoFocusChange: (isFocused: boolean) => void;
 }
+
+// Configuration
+const HISTORY_SIZE = 5;
+const DOUBLE_PINCH_TIMING = 400; // ms between pinches to count as double click
+const SWIPE_THRESHOLD = 0.015; // Velocity threshold for swipe
+const FIST_THRESHOLD = 0.22; // Average distance of finger tips to wrist to count as fist
+const OPEN_THRESHOLD = 0.35; // Average distance to count as open hand
+
+type GestureAction = 'LOCKED_FOCUS' | 'FORM' | 'CHAOS_AND_CONTROL' | 'NONE';
 
 export const HandController: React.FC<HandControllerProps> = ({ 
   onStateChange, 
   onZoomChange, 
-  onRotateChange 
+  onRotateChange,
+  onPhotoFocusChange
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [currentAction, setCurrentAction] = useState<GestureAction>('NONE');
   
-  const lastVideoTimeRef = useRef(-1);
   const requestRef = useRef<number>(0);
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
 
-  // Gesture State
-  const lastHandX = useRef<number | null>(null);
-  const pinchFrames = useRef(0);
-  const openHandFrames = useRef(0);
-  const lastZoomFactor = useRef(0.5);
+  // --- STATE MACHINES & HISTORY ---
+  
+  // 1. Motion Smoothing
+  const palmHistory = useRef<{x: number, y: number, time: number}[]>([]);
+  const zoomHistory = useRef<number[]>([]); 
+  
+  // 2. Double Pinch Logic
+  const pinchState = useRef({
+    isPinched: false,
+    lastPinchReleaseTime: 0,
+    clickCount: 0,
+    isLocked: false // If true, we are in "Focus Mode" holding the pinch
+  });
 
   useEffect(() => {
     const initMediaPipe = async () => {
@@ -39,7 +58,7 @@ export const HandController: React.FC<HandControllerProps> = ({
             delegate: "GPU"
           },
           runningMode: "VIDEO",
-          numHands: 1
+          numHands: 1 
         });
         
         startWebcam();
@@ -66,7 +85,6 @@ export const HandController: React.FC<HandControllerProps> = ({
       });
       videoRef.current.srcObject = stream;
       videoRef.current.addEventListener("loadeddata", predictWebcam);
-      setIsLoaded(true);
     } catch (err) {
       console.error("Webcam access denied", err);
     }
@@ -77,10 +95,7 @@ export const HandController: React.FC<HandControllerProps> = ({
     const canvas = canvasRef.current;
     const landmarker = handLandmarkerRef.current;
 
-    if (video && canvas && landmarker && video.currentTime !== lastVideoTimeRef.current) {
-      lastVideoTimeRef.current = video.currentTime;
-      
-      // Resize canvas to match video
+    if (video && canvas && landmarker) {
       if (canvas.width !== video.videoWidth) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -88,110 +103,181 @@ export const HandController: React.FC<HandControllerProps> = ({
 
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        // Clear canvas for transparency
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
         const startTimeMs = performance.now();
         const results = landmarker.detectForVideo(video, startTimeMs);
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Debug Visualization
         const drawingUtils = new DrawingUtils(ctx);
+        if (results.landmarks) {
+          for (const landmarks of results.landmarks) {
+             drawingUtils.drawConnectors(landmarks, HandLandmarker.HAND_CONNECTIONS, {
+                color: '#00ff44', lineWidth: 2
+             });
+             drawingUtils.drawLandmarks(landmarks, {
+                color: '#FFD700', lineWidth: 1, radius: 2
+             });
+          }
+        }
 
-        if (results.landmarks && results.landmarks.length > 0) {
-          const landmarks = results.landmarks[0];
-          
-          // --- 1. VISUALIZATION (Wireframe) ---
-          // Draw connectors (Skeleton)
-          drawingUtils.drawConnectors(landmarks, HandLandmarker.HAND_CONNECTIONS, {
-            color: '#00ff44', // Green Matrix-style lines
-            lineWidth: 3
-          });
-          // Draw landmarks (Joints)
-          drawingUtils.drawLandmarks(landmarks, {
-            color: '#FFD700', // Gold joints
-            lineWidth: 1,
-            radius: 3
-          });
-
-          // --- 2. GESTURE LOGIC ---
-          processGestures(landmarks);
-        } else {
-          // No hand detected
-          onRotateChange(0);
+        const action = processGestures(results.landmarks);
+        setCurrentAction(action);
+        
+        // UI Debug
+        if (action !== 'NONE') {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+            ctx.fillRect(10, 10, 240, 30);
+            ctx.fillStyle = action === 'LOCKED_FOCUS' ? "#ff3366" : "#FFD700";
+            ctx.font = "bold 14px monospace";
+            ctx.fillText(`MODE: ${action}`, 20, 30);
         }
       }
     }
     requestRef.current = requestAnimationFrame(predictWebcam);
   };
 
-  const processGestures = (landmarks: any[]) => {
-    const wrist = landmarks[0];
-    const thumbTip = landmarks[4];
-    const indexTip = landmarks[8];
-    const middleTip = landmarks[12];
-    const ringTip = landmarks[16];
-    const pinkyTip = landmarks[20];
-    const palmCenter = { x: landmarks[9].x, y: landmarks[9].y }; // Middle finger MCP
+  // --- CORE LOGIC ---
 
-    // --- A. AGGREGATION (Tree State) ---
-    // Calculate "Spread": Average distance of finger tips from palm center
-    const tips = [thumbTip, indexTip, middleTip, ringTip, pinkyTip];
-    let totalDist = 0;
-    tips.forEach(tip => {
-      totalDist += Math.hypot(tip.x - palmCenter.x, tip.y - palmCenter.y);
-    });
-    const avgSpread = totalDist / 5;
+  const processGestures = (landmarksArray: NormalizedLandmark[][]): GestureAction => {
+    const now = performance.now();
 
-    // Thresholds: Small spread = Fist/Pinch; Large spread = Open Hand
-    // Typical values: Open ~0.15+, Fist ~0.05
-    const isGathered = avgSpread < 0.12; 
-    const isScattered = avgSpread > 0.18;
+    // 0. RESET IF NO HAND
+    if (!landmarksArray || landmarksArray.length === 0) {
+        // Safe Reset
+        onRotateChange(0);
+        pinchState.current.isPinched = false;
+        pinchState.current.isLocked = false;
+        pinchState.current.clickCount = 0;
+        onPhotoFocusChange(false);
+        return 'NONE';
+    }
 
-    if (isGathered) {
-      pinchFrames.current++;
-      openHandFrames.current = 0;
-      // Require sustained gesture to avoid flicker
-      if (pinchFrames.current > 5) onStateChange(TreeState.FORMED);
-    } else if (isScattered) {
-      openHandFrames.current++;
-      pinchFrames.current = 0;
-      if (openHandFrames.current > 5) onStateChange(TreeState.CHAOS);
+    const hand = landmarksArray[0];
+    const wrist = hand[0];
+    const thumbTip = hand[4];
+    const indexTip = hand[8];
+    const middleTip = hand[12];
+    const ringTip = hand[16];
+    const pinkyTip = hand[20];
+
+    // --- 1. PINCH DETECTION (INDEX + THUMB) ---
+    const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+    const isCurrentlyPinched = pinchDist < 0.05;
+
+    // Rising Edge (Just Pinched)
+    if (isCurrentlyPinched && !pinchState.current.isPinched) {
+        const timeSinceRelease = now - pinchState.current.lastPinchReleaseTime;
+        
+        if (timeSinceRelease < DOUBLE_PINCH_TIMING) {
+            // Second Click detected!
+            pinchState.current.clickCount = 2;
+            pinchState.current.isLocked = true; // Lock engaged
+        } else {
+            // First Click or timed out
+            pinchState.current.clickCount = 1;
+        }
+    }
+
+    // Falling Edge (Just Released)
+    if (!isCurrentlyPinched && pinchState.current.isPinched) {
+        pinchState.current.lastPinchReleaseTime = now;
+        // Unlock on release
+        if (pinchState.current.isLocked) {
+             pinchState.current.isLocked = false;
+             pinchState.current.clickCount = 0;
+        }
+    }
+
+    pinchState.current.isPinched = isCurrentlyPinched;
+
+    // --- 2. PRIORITY: LOCKED FOCUS MODE ---
+    if (pinchState.current.isLocked) {
+        onPhotoFocusChange(true);
+        onRotateChange(0); // Freeze rotation
+        // We do NOT change zoom or state here. Total Lock.
+        return 'LOCKED_FOCUS';
     } else {
-      // Neutral state - maintain current, just decay counters
-      pinchFrames.current = Math.max(0, pinchFrames.current - 1);
-      openHandFrames.current = Math.max(0, openHandFrames.current - 1);
+        onPhotoFocusChange(false);
     }
 
-    // --- B. ZOOM (Palm Depth) ---
-    // We can estimate depth by the distance between wrist and middle finger MCP (Palm length)
-    // Larger length = Closer to camera
-    const palmLength = Math.hypot(middleTip.x - wrist.x, middleTip.y - wrist.y);
-    // Map 0.1 (Far) -> 0.4 (Close) to Zoom 0 -> 1
-    const rawZoom = (palmLength - 0.15) * 3.5; 
-    const clampedZoom = Math.max(0, Math.min(1, rawZoom));
-    
-    // Smooth Lerp
-    lastZoomFactor.current = lastZoomFactor.current + (clampedZoom - lastZoomFactor.current) * 0.15;
-    onZoomChange(lastZoomFactor.current);
+    // --- 3. FIST vs OPEN DETECTION ---
+    const tips = [indexTip, middleTip, ringTip, pinkyTip];
+    // Calculate average distance from wrist to finger tips
+    const avgDist = tips.reduce((acc, tip) => acc + Math.hypot(tip.x - wrist.x, tip.y - wrist.y), 0) / 4;
 
-    // --- C. ROTATION (Swipe) ---
-    // Only rotate if hand is somewhat vertical (palm facing camera, not pointing down for commands)
-    const currentX = wrist.x;
-    
-    // Check if fingers are pointed up (Wrist Y > Finger Y because Y increases downwards in screen coords)
-    const isHandUpright = wrist.y > middleTip.y;
+    const isFist = avgDist < FIST_THRESHOLD;
+    const isOpen = avgDist > OPEN_THRESHOLD; // Use a gap for hysteresis
 
-    if (lastHandX.current !== null && isHandUpright) {
-      const deltaX = currentX - lastHandX.current;
-      
-      // Sensitivity Threshold
-      if (Math.abs(deltaX) > 0.005) {
-        // Negative multiplier because mirroring + 3D rotation direction
-        // Moving hand right (on screen) -> Rotate Tree Right
-        onRotateChange(-deltaX * 2.0);
-      } else {
-         onRotateChange(0);
-      }
+    // --- 4. ACTION: FIST (BUILD TREE) ---
+    if (isFist) {
+        onStateChange(TreeState.FORMED);
+        onRotateChange(0); // Stop spinning when building
+        return 'FORM';
     }
-    lastHandX.current = currentX;
+
+    // --- 5. ACTION: OPEN HAND (CHAOS + CONTROL) ---
+    if (isOpen) {
+        // Enforce Chaos State
+        onStateChange(TreeState.CHAOS);
+
+        // A. Rotation (Swipe) Logic
+        // Track history
+        palmHistory.current.push({ x: wrist.x, y: wrist.y, time: now });
+        if (palmHistory.current.length > HISTORY_SIZE) palmHistory.current.shift();
+
+        let dx = 0;
+        if (palmHistory.current.length >= 2) {
+            const latest = palmHistory.current[palmHistory.current.length - 1];
+            const old = palmHistory.current[0];
+            dx = latest.x - old.x;
+        }
+
+        // Apply Deadzone for rotation
+        if (Math.abs(dx) > SWIPE_THRESHOLD) {
+             // Invert X because webcam is mirrored usually, or canvas is scaleX(-1)
+             // If canvas is scaleX(-1), moving hand Right physically appears as moving Left on screen coords?
+             // Let's standardise: Moving hand Right (User's Right) should rotate tree Right.
+             // Canvas is mirrored.
+             onRotateChange(dx * -40.0); 
+        } else {
+             onRotateChange(0);
+        }
+
+        // B. Zoom (Depth) Logic
+        // Metric: Hand Size (Wrist to Middle Finger Tip)
+        // Large Size = Hand Close = Tree Far (Zoom Out, Factor -> 0)
+        // Small Size = Hand Far = Tree Close (Zoom In, Factor -> 1)
+        const handSize = Math.hypot(middleTip.x - wrist.x, middleTip.y - wrist.y);
+        
+        // Calibration: 
+        // Far hand ~ 0.15 (normalized) -> Zoom 1.0
+        // Close hand ~ 0.45 (normalized) -> Zoom 0.0
+        const minSize = 0.15;
+        const maxSize = 0.45;
+        
+        // Normalize 0 to 1 based on range
+        let t = (handSize - minSize) / (maxSize - minSize);
+        t = Math.max(0, Math.min(1, t)); // Clamp 0-1
+        
+        // Inverse Relationship requested
+        // Hand Close (t=1) -> Tree Small (Zoom=0)
+        // Hand Far (t=0) -> Tree Big (Zoom=1)
+        const targetZoom = 1 - t; 
+
+        // Smooth Zoom
+        zoomHistory.current.push(targetZoom);
+        if (zoomHistory.current.length > 5) zoomHistory.current.shift();
+        const smoothedZoom = zoomHistory.current.reduce((a, b) => a + b, 0) / zoomHistory.current.length;
+        
+        onZoomChange(smoothedZoom);
+
+        return 'CHAOS_AND_CONTROL';
+    }
+
+    // Fallback if hand is "neutral" (neither full fist nor full open)
+    onRotateChange(0);
+    return 'NONE';
   };
 
   return (
