@@ -11,12 +11,13 @@ interface LuxuryTreeProps {
   isPhotoFocused: boolean;
 }
 
-const NEEDLE_COUNT = 25000; // Increased count for smaller particles
+// Keep needle count high for density
+const NEEDLE_COUNT = 40000; 
 const ORNAMENT_COUNT = 180; 
 const TREE_HEIGHT = 12;
 const TREE_RADIUS = 4.5;
 const CHAOS_RADIUS = 15;
-const TREE_TIERS = 8; // Number of distinct layers for the pine look
+const TREE_TIERS = 8; 
 
 const TREE_TOP_Y = 0.8 * TREE_HEIGHT; 
 
@@ -173,7 +174,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
   const [loadedTextures, setLoadedTextures] = useState<THREE.Texture[]>([]);
 
-  // UPDATED TEXTURE: Small, sharp glow
+  // UPDATED TEXTURE: Solid matte circle (No glow)
   const particleTexture = useMemo(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 32; 
@@ -186,16 +187,10 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
         const cy = 16;
         const r = 14;
 
-        // Draw a tight radial gradient for a "sharp" glow
-        const grad = ctx.createRadialGradient(cx, cy, 2, cx, cy, r);
-        grad.addColorStop(0, 'rgba(255, 255, 255, 1)'); 
-        grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.8)');
-        grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.2)');
-        grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-        
-        ctx.fillStyle = grad;
+        // Solid white circle, no gradient fade out
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
         ctx.fill();
     }
     const tex = new THREE.CanvasTexture(canvas);
@@ -348,7 +343,9 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
       let color = new THREE.Color();
       let scale = new THREE.Vector3(1, 1, 1);
-      const baseScale = 0.2 + Math.random() * 0.2;
+      
+      // SMALLER ORNAMENTS AGAIN
+      const baseScale = 0.18 + Math.random() * 0.12; 
 
       if (type === OrnamentType.SPHERE) {
         color = sphereColors[Math.floor(Math.random() * sphereColors.length)];
@@ -364,7 +361,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
         scale.setScalar(baseScale * 3.0); 
       } else if (type === OrnamentType.HEPTAGRAM) {
         color = new THREE.Color("#CFB53B"); 
-        scale.setScalar(baseScale * 1.2); 
+        scale.setScalar(baseScale * 0.9); 
       }
 
       let localIndex = 0;
@@ -401,9 +398,14 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
   const focusProgress = useRef(0);
   const dummyObj = useMemo(() => new THREE.Object3D(), []);
 
+  // Use vectors to avoid garbage collection
+  const vec3 = useMemo(() => new THREE.Vector3(), []);
+  const quat = useMemo(() => new THREE.Quaternion(), []);
+
   useFrame((state, delta) => {
     if (!groupRef.current || !needlesRef.current) return;
 
+    // Detect Focus Trigger
     if (isPhotoFocused && !prevFocusState.current) {
         const worldRot = groupRef.current.rotation.y;
         let minDist = Infinity;
@@ -411,14 +413,18 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
         ornamentData.forEach(orn => {
             if (orn.type !== OrnamentType.USER) return;
+            // Calculate current world position of the photo
             const p = currentProgress.current;
             const invP = 1 - p;
             const bx = orn.cPos.x * invP + orn.tPos.x * p;
             const by = orn.cPos.y * invP + orn.tPos.y * p;
             const bz = orn.cPos.z * invP + orn.tPos.z * p;
+            
+            // Approximate world position based on group rotation
             const wx = bx * Math.cos(worldRot) + bz * Math.sin(worldRot);
             const wy = by;
             const wz = -bx * Math.sin(worldRot) + bz * Math.cos(worldRot);
+            
             const d = (wx - camera.position.x)**2 + (wy - camera.position.y)**2 + (wz - camera.position.z)**2;
             if (d < minDist) { minDist = d; nearestId = orn.id; }
         });
@@ -459,20 +465,20 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
     const globalScale = THREE.MathUtils.lerp(1.5, 1.0, p);
     const userShrinkFactor = THREE.MathUtils.lerp(1.5, 0.3, p);
-    const focusPos = new THREE.Vector3(0, 4, state.camera.position.z - 5);
 
     ornamentData.forEach((orn) => {
+        // Base Tree Position
         let x = orn.cPos.x * invP + orn.tPos.x * p;
         let y = orn.cPos.y * invP + orn.tPos.y * p;
         let z = orn.cPos.z * invP + orn.tPos.z * p;
         
         const isFixed = (orn.type === OrnamentType.HEPTAGRAM);
         
+        // Gentle tree motion
         if (p > 0.1) {
             const waveAmp = 0.05 * p; 
             const waveFreq = 1.5;
             const spatialPhase = orn.tPos.x * 0.5 + orn.tPos.y * 0.5;
-
             x += Math.sin(time * waveFreq + spatialPhase) * waveAmp;
             y += Math.cos(time * waveFreq * 0.8 + spatialPhase) * waveAmp * 0.5; 
             z += Math.sin(time * waveFreq * 1.2 + spatialPhase) * waveAmp;
@@ -483,30 +489,74 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
         }
 
         const isTarget = (orn.id === activeFocusIndex);
-        dummyObj.rotation.set(0, 0, 0);
+        dummyObj.rotation.set(0, 0, 0); // Reset for clean state
         
         let breathe = 1.0;
         if (!isFixed) {
             breathe = 1.0 + Math.sin(time * 3 + orn.phase) * 0.05;
         }
         
-        const currentScaleVec = orn.scale.clone().multiplyScalar(globalScale * breathe);
-        if (orn.type === OrnamentType.USER) currentScaleVec.multiplyScalar(userShrinkFactor);
+        // Base Scale on Tree
+        const treeScaleVec = orn.scale.clone().multiplyScalar(globalScale * breathe);
+        if (orn.type === OrnamentType.USER) treeScaleVec.multiplyScalar(userShrinkFactor);
 
-        if (isTarget && fp > 0.01) {
-            const invRotY = -groupRef.current!.rotation.y;
-            const targetX = focusPos.x * Math.cos(invRotY) - focusPos.z * Math.sin(invRotY);
-            const targetZ = focusPos.x * Math.sin(invRotY) + focusPos.z * Math.cos(invRotY);
-            const targetY = focusPos.y; 
-            x = THREE.MathUtils.lerp(x, targetX, fp);
-            y = THREE.MathUtils.lerp(y, targetY, fp);
-            z = THREE.MathUtils.lerp(z, targetZ, fp);
-            dummyObj.scale.lerpVectors(currentScaleVec, new THREE.Vector3(3.0, 3.0, 3.0), fp);
-            dummyObj.position.set(x, y, z);
-            const vCam = camera.position.clone();
-            groupRef.current?.worldToLocal(vCam);
-            dummyObj.lookAt(vCam);
+        if (isTarget && fp > 0.001) {
+            // --- FOCUS MODE CALCULATION ---
+            // Goal: Calculate local pos/rot so that WorldPos matches camera center at fixed distance
+            
+            // 1. Calculate Target World Params
+            const dist = 10; // Fixed distance from camera
+            const vFOV = camera.fov * Math.PI / 180;
+            const visibleHeight = 2 * Math.tan(vFOV / 2) * dist;
+            // Target Area = 1/6th of screen. 
+            // Square Root of 1/6 is approx 0.408. 
+            // So we want the object to take up ~41% of screen height.
+            const targetHeight = visibleHeight * 0.408;
+            const geomHeight = 2.0; // Height of frame geometry
+            const targetScaleVal = targetHeight / geomHeight;
+            const targetScaleVec = new THREE.Vector3(targetScaleVal, targetScaleVal, targetScaleVal);
+
+            // Target World Position: Camera Pos + Forward * Distance
+            camera.getWorldDirection(vec3);
+            const worldTargetPos = camera.position.clone().add(vec3.multiplyScalar(dist));
+            
+            // Target World Rotation: Look at Camera (or match camera orientation)
+            // We match camera orientation so it's perfectly flat to screen
+            const worldTargetQuat = camera.quaternion.clone();
+
+            // 2. Convert World to Local (cancel out Group Rotation)
+            // Local = Inv(GroupMatrix) * World
+            // Since Group only rotates Y and is at 0,0,0, we can just rotate vectors/quaternions
+            const groupInvQuat = groupRef.current!.quaternion.clone().invert();
+            
+            // Local Position
+            // P_local = P_world.applyQuaternion(GroupInv)
+            const localTargetPos = worldTargetPos.clone().applyQuaternion(groupInvQuat);
+            
+            // Local Rotation
+            // Q_local = GroupInv * Q_world
+            const localTargetQuat = groupInvQuat.multiply(worldTargetQuat);
+
+            // 3. Interpolate from Tree State to Focus State
+            // Current Tree Position
+            const treePos = new THREE.Vector3(x, y, z);
+            
+            // Interpolate Position
+            dummyObj.position.lerpVectors(treePos, localTargetPos, fp);
+            
+            // Interpolate Rotation
+            // Calculate tree-state rotation
+            const treeQuat = new THREE.Quaternion();
+            const dummyEuler = new THREE.Euler(0, time * 0.2 + orn.phase, Math.sin(time * 0.5 + orn.phase) * 0.1);
+            treeQuat.setFromEuler(dummyEuler);
+            
+            dummyObj.quaternion.slerpQuaternions(treeQuat, localTargetQuat, fp);
+            
+            // Interpolate Scale
+            dummyObj.scale.lerpVectors(treeScaleVec, targetScaleVec, fp);
+
         } else {
+            // Normal Tree State
             dummyObj.position.set(x, y, z);
             
             if (isFixed) {
@@ -519,7 +569,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
             } else {
                dummyObj.rotateOnAxis(orn.rotationAxis, time * orn.rotSpeed + orn.phase);
             }
-            dummyObj.scale.copy(currentScaleVec);
+            dummyObj.scale.copy(treeScaleVec);
         }
         dummyObj.updateMatrix();
 
@@ -555,7 +605,8 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     userMeshRefs.current.forEach(mesh => { if (mesh) mesh.instanceMatrix.needsUpdate = true; });
 
     if (extraRotationVelocity && !isPhotoFocused) {
-        velocity.current += extraRotationVelocity.current * 0.2; 
+        // Increased influence (0.15) for snappier rotation
+        velocity.current += extraRotationVelocity.current * 0.15; 
         extraRotationVelocity.current = 0; 
     }
     
@@ -579,17 +630,17 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
           <bufferAttribute attach="attributes-color" count={NEEDLE_COUNT} array={needleData.colors} itemSize={3} />
         </bufferGeometry>
         
-        {/* UPDATED MATERIAL: Small, glowing needles */}
+        {/* UPDATED MATERIAL: Matte, tiny particles */}
         <pointsMaterial 
             map={particleTexture}
             vertexColors 
-            size={0.25} // Small size
+            size={0.06} // VERY SMALL
             sizeAttenuation={true} 
             transparent={true} 
-            opacity={1.0} 
-            alphaTest={0.01} 
+            opacity={0.9} 
+            alphaTest={0.1} 
             depthWrite={false}
-            blending={THREE.AdditiveBlending} // Back to glow
+            blending={THREE.NormalBlending} 
         />
       </points>
 

@@ -15,9 +15,9 @@ const FIST_THRESHOLD = 0.20;
 const CHAOS_SPREAD_SPEED_THRESHOLD = 0.015; 
 
 // Interaction Config
-const ROTATION_THRESHOLD = 0.002; 
+const ROTATION_THRESHOLD = 0.01; // Deadzone
 const ZOOM_THRESHOLD = 0.005;      
-const ROTATION_SENSITIVITY = 25.0; 
+const ROTATION_SENSITIVITY = 20.0; // Increased Sensitivity (was 8.0)
 const ZOOM_SENSITIVITY = 2.0;       
 
 // Throttling for Mobile Performance
@@ -317,16 +317,19 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
     let rotInput = 0;
     if (Math.abs(dX) > ROTATION_THRESHOLD) {
         const sign = Math.sign(dX);
-        const val = Math.abs(dX);
+        // Normalized input
+        const val = Math.abs(dX) - ROTATION_THRESHOLD; 
         rotInput = sign * Math.pow(val, 1.2) * ROTATION_SENSITIVITY;
     }
 
-    smoothedVelocity.current = smoothedVelocity.current * 0.6 + rotInput * 0.4;
+    // Snappier response: less history (0.8), more new input (0.2)
+    smoothedVelocity.current = smoothedVelocity.current * 0.8 + rotInput * 0.2;
     
     onRotateChange(smoothedVelocity.current);
 
     if (Math.abs(dY) > ZOOM_THRESHOLD) {
-        const zoomDelta = dY * ZOOM_SENSITIVITY; 
+        // INVERTED ZOOM LOGIC
+        const zoomDelta = -dY * ZOOM_SENSITIVITY; 
         currentZoomLevel.current += zoomDelta;
         currentZoomLevel.current = Math.max(0, Math.min(1, currentZoomLevel.current));
         onZoomChange(currentZoomLevel.current);
