@@ -5,6 +5,7 @@ import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
 import { TreeState } from './types';
 import { LuxuryTree } from './components/LuxuryTree';
 import { GoldDust } from './components/GoldDust';
+import { GoldenSpirals } from './components/GoldenSpirals';
 import { AmbientParticles } from './components/AmbientParticles';
 import { Overlay } from './components/Overlay';
 import { HandController } from './components/HandController';
@@ -93,6 +94,10 @@ const App: React.FC = () => {
               userTextureUrls={userTextureUrls}
               isPhotoFocused={isPhotoFocused}
             />
+            
+            {/* The new non-chaotic Spiral Layer */}
+            <GoldenSpirals treeState={treeState} />
+
             {/* Foreground interactive dust */}
             <GoldDust treeState={treeState} />
         </Suspense>
