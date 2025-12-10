@@ -165,6 +165,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
   const groupRef = useRef<THREE.Group>(null);
   const needlesRef = useRef<THREE.Points>(null);
   const needlesMaterialRef = useRef<THREE.PointsMaterial>(null);
+  const trunkRef = useRef<THREE.Points>(null); // NEW TRUNK REF
   
   // Independent mesh for the focused photo to ensure it renders on top
   const focusedMeshRef = useRef<THREE.Mesh>(null);
@@ -295,6 +296,70 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     return { chaos, target, colors };
   }, []);
 
+  // NEW TRUNK DATA GENERATION
+  const TRUNK_COUNT = 6000;
+  const trunkData = useMemo(() => {
+    const chaos = new Float32Array(TRUNK_COUNT * 3);
+    const target = new Float32Array(TRUNK_COUNT * 3);
+    const colors = new Float32Array(TRUNK_COUNT * 3);
+    
+    const c1 = new THREE.Color("#5D4037"); // Dark Brown
+    const c2 = new THREE.Color("#4E342E"); // Darker Brown
+    const tempColor = new THREE.Color();
+
+    for (let i = 0; i < TRUNK_COUNT; i++) {
+        const cPos = randomPointInSphere(CHAOS_RADIUS);
+        chaos[i*3] = cPos.x;
+        chaos[i*3+1] = cPos.y;
+        chaos[i*3+2] = cPos.z;
+
+        const t = Math.random();
+        
+        let x, y, z;
+        
+        // 25% Roots, 75% Trunk
+        if (t < 0.25) { 
+             // Roots Section: y from -3.5 to 0
+             const rootT = Math.random(); // 0 to 1
+             y = -3.5 * (1 - rootT); // -3.5 to 0
+             
+             // Radius: Wide flare at bottom
+             const flare = Math.pow(1 - rootT, 3) * 4.0;
+             const radius = 0.5 + flare;
+             
+             // Spiral Upwards Tightening
+             // Angle changes with height
+             const angle = rootT * Math.PI * 8 + (i % 5) * (Math.PI * 2 / 5);
+             
+             // Add volume
+             const r = radius + (Math.random()-0.5)*0.6;
+             x = Math.cos(angle) * r;
+             z = Math.sin(angle) * r;
+        } else { 
+             // Trunk Section: y from 0 to 75% of tree height
+             const trunkT = Math.random();
+             y = trunkT * (TREE_HEIGHT * 0.75); 
+             
+             const radius = 0.6 * (1 - trunkT * 0.3); // Slight taper
+             const angle = Math.random() * Math.PI * 2;
+             const r = Math.sqrt(Math.random()) * radius; // Solid cylinder
+             
+             x = Math.cos(angle) * r;
+             z = Math.sin(angle) * r;
+        }
+
+        target[i*3] = x;
+        target[i*3+1] = y;
+        target[i*3+2] = z;
+
+        tempColor.lerpColors(c1, c2, Math.random());
+        colors[i*3] = tempColor.r;
+        colors[i*3+1] = tempColor.g;
+        colors[i*3+2] = tempColor.b;
+    }
+    return { chaos, target, colors };
+  }, []);
+
   const { ornamentData, counts, userCounts } = useMemo(() => {
     const data = [];
     // UPDATED RED COLOR (Brighter #E60000 for better gloss)
@@ -420,7 +485,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
   }, [activeFocusIndex, loadedTextures, ornamentData]);
 
   useFrame((state, delta) => {
-    if (!groupRef.current || !needlesRef.current) return;
+    if (!groupRef.current || !needlesRef.current || !trunkRef.current) return;
 
     // Detect Focus Trigger
     if (isPhotoFocused && !prevFocusState.current) {
@@ -455,8 +520,6 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     const invP = 1 - p;
 
     // --- PARTICLE SIZE LOGIC ---
-    // Chaos (p=0) -> 1.15x size
-    // Formed (p=1) -> 1.0x size
     if (needlesMaterialRef.current) {
         const baseSize = 0.06;
         const sizeMultiplier = THREE.MathUtils.lerp(1.15, 1.0, p);
@@ -470,6 +533,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     const time = state.clock.elapsedTime;
     const positions = needlesRef.current.geometry.attributes.position;
     
+    // UPDATE NEEDLES
     for (let i = 0; i < NEEDLE_COUNT; i++) {
       let x = needleData.chaos[i * 3] * invP + needleData.target[i * 3] * p;
       let y = needleData.chaos[i * 3 + 1] * invP + needleData.target[i * 3 + 1] * p;
@@ -488,6 +552,22 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
       positions.setXYZ(i, x, y, z);
     }
     positions.needsUpdate = true;
+    
+    // UPDATE TRUNK
+    const tPositions = trunkRef.current.geometry.attributes.position;
+    for (let i = 0; i < TRUNK_COUNT; i++) {
+        let x = trunkData.chaos[i * 3] * invP + trunkData.target[i * 3] * p;
+        let y = trunkData.chaos[i * 3 + 1] * invP + trunkData.target[i * 3 + 1] * p;
+        let z = trunkData.chaos[i * 3 + 2] * invP + trunkData.target[i * 3 + 2] * p;
+        
+        // Gentle Sway for Trunk too
+        if (p > 0.1) {
+             x += Math.sin(time * 1.0 + y * 0.3) * 0.02 * p;
+             z += Math.cos(time * 0.8 + y * 0.3) * 0.02 * p;
+        }
+        tPositions.setXYZ(i, x, y, z);
+    }
+    tPositions.needsUpdate = true;
 
     const globalScale = THREE.MathUtils.lerp(1.5, 1.0, p);
     const userShrinkFactor = THREE.MathUtils.lerp(1.5, 0.3, p);
@@ -660,6 +740,23 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     <group ref={groupRef}>
       {treeState === TreeState.FORMED && <SantaHat />}
 
+      {/* NEW TRUNK PARTICLES */}
+      <points ref={trunkRef}>
+        <bufferGeometry>
+            <bufferAttribute attach="attributes-position" count={TRUNK_COUNT} array={trunkData.chaos} itemSize={3} />
+            <bufferAttribute attach="attributes-color" count={TRUNK_COUNT} array={trunkData.colors} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial 
+            map={particleTexture}
+            vertexColors
+            size={0.08}
+            sizeAttenuation
+            transparent={true}
+            opacity={0.95}
+            depthWrite={false}
+        />
+      </points>
+
       <points ref={needlesRef}>
         <bufferGeometry>
           <bufferAttribute attach="attributes-position" count={NEEDLE_COUNT} array={needleData.chaos} itemSize={3} />
@@ -711,15 +808,16 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
       {/* 
           Separate Mesh for Focused Photo 
-          - renderOrder={999} makes it render last.
-          - depthTest={false} makes it ignore z-buffer (always on top).
-          - transparent={false} ensures opacity
+          - renderOrder={9999} makes it render last.
+          - transparent={true} ensures it participates in transparent sorting logic.
+          - opacity={1} ensures full visibility.
+          - This combination ensures it renders ON TOP of background particles which are also transparent.
       */}
       {activeTexture && (
           <mesh 
             ref={focusedMeshRef} 
             geometry={framedGeometry} 
-            renderOrder={999}
+            renderOrder={9999}
             scale={[0,0,0]} // Starts hidden, updated in useFrame
           >
              {/* Material 0: Gold Frame */}
@@ -732,7 +830,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
                 envMapIntensity={1.2}
                 depthTest={false}
                 depthWrite={false}
-                transparent={false}
+                transparent={true}
                 opacity={1}
              />
              {/* Material 1: Photo */}
@@ -744,7 +842,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
                 color="#ffffff"
                 depthTest={false}
                 depthWrite={false}
-                transparent={false}
+                transparent={true}
                 opacity={1}
                 emissive="#333333" 
                 emissiveIntensity={0.2}

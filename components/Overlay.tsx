@@ -58,7 +58,7 @@ export const Overlay: React.FC<OverlayProps> = ({ currentState, onToggle, onUplo
         </h1>
         
         {/* User Input Subtitle - Completely Centered, No Underline */}
-        <div className="flex items-center justify-center gap-2 mt-2 w-full text-emerald-400 text-sm md:text-lg tracking-[0.2em] font-light italic" style={{ fontFamily: '"Playfair Display", serif' }}>
+        <div className="flex items-center justify-center gap-1 mt-2 w-full text-emerald-400 text-sm md:text-lg tracking-[0.2em] font-light italic" style={{ fontFamily: '"Playfair Display", serif' }}>
             <span>Especially for</span>
             <input 
                 type="text" 
