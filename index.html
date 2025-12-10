@@ -5,19 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Grand Luxury Christmas Tree</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Pinyon+Script&display=swap" rel="stylesheet">
     <style>
       body { margin: 0; padding: 0; background-color: #010a05; overflow: hidden; }
       /* Custom scrollbar for luxury feel if needed, though mostly hidden */
       ::-webkit-scrollbar { width: 0px; }
       
       /* Container for the hand tracking preview */
+      /* 
+         Logic for 1/30th of screen:
+         Previous 1/20th was ~22vw.
+         1/30th is approx 2/3 the area, so width scales by sqrt(2/3) ~= 0.81.
+         22vw * 0.81 = ~17.8vw. We round down to 16vw to ensure it's small and elegant.
+      */
       .hand-tracker-container {
         position: absolute;
-        bottom: 20px;
+        bottom: 60px; /* Tight fit against the button at bottom 20px + button height */
         left: 20px;
-        width: 240px;
-        height: 180px;
+        width: 16vw;  /* Reduced width */
+        max-width: 200px; /* Reduced max cap */
+        min-width: 100px; /* Reduced min */
+        aspect-ratio: 4/3;
         z-index: 50;
         pointer-events: none;
       }
@@ -37,9 +45,10 @@
         width: 100%;
         height: 100%;
         transform: scaleX(-1); /* Mirror to match user movement */
-        border-radius: 12px;
-        border: 1px solid rgba(255, 215, 0, 0.3);
-        background: rgba(0, 10, 5, 0.6); /* Slight dark bg to make lines pop */
+        border-radius: 8px; /* Slightly sharper corners */
+        border: 2px solid rgba(212, 175, 55, 0.6); /* Sharper gold border */
+        box-shadow: 0 0 15px rgba(0,0,0,0.8);
+        background: rgba(0, 10, 5, 0.4); 
       }
     </style>
   <script type="importmap">

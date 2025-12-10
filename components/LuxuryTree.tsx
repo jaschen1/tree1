@@ -164,6 +164,12 @@ const randomPointInPineTree = (height: number, maxRadius: number, tiers: number)
 export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotationVelocity, userTextureUrls, isPhotoFocused }) => {
   const groupRef = useRef<THREE.Group>(null);
   const needlesRef = useRef<THREE.Points>(null);
+  const needlesMaterialRef = useRef<THREE.PointsMaterial>(null);
+  
+  // Independent mesh for the focused photo to ensure it renders on top
+  const focusedMeshRef = useRef<THREE.Mesh>(null);
+  const [activeTexture, setActiveTexture] = useState<THREE.Texture | null>(null);
+
   const { camera } = useThree();
   
   const sphereMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -291,7 +297,8 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
   const { ornamentData, counts, userCounts } = useMemo(() => {
     const data = [];
-    const sphereColors = [new THREE.Color("#FFD700"), new THREE.Color("#C5A000"), new THREE.Color("#8B0000"), new THREE.Color("#004225"), new THREE.Color("#C0C0C0")];
+    // UPDATED RED COLOR (Brighter #E60000 for better gloss)
+    const sphereColors = [new THREE.Color("#FFD700"), new THREE.Color("#C5A000"), new THREE.Color("#E60000"), new THREE.Color("#004225"), new THREE.Color("#C0C0C0")];
     const boxColors = [new THREE.Color("#8B0000"), new THREE.Color("#FFFFFF"), new THREE.Color("#D4AF37")];
     const gemColors = [new THREE.Color("#FFFFFF"), new THREE.Color("#E0FFFF")];
 
@@ -313,12 +320,11 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
         textureIndex = Math.floor(Math.random() * loadedTextures.length);
         uCounts[textureIndex]++;
         
-        // Custom logic for User photos to ensure they spiral nicely
-        const sectionR = Math.random();
-        let normalizedH = 0.5; 
-        if (sectionR < 0.15) normalizedH = Math.random() * 0.2;
-        else if (sectionR > 0.85) normalizedH = 0.8 + Math.random() * 0.2;
-        else normalizedH = 0.2 + (Math.random() + Math.random())/2 * 0.6; 
+        // UPDATED: Distribution Logic to concentrate in middle (0.25 to 0.75)
+        // Triangle distribution centered at 0.5
+        const r1 = (Math.random() + Math.random()) / 2; 
+        // Map 0..1 to 0.25..0.75
+        const normalizedH = 0.25 + r1 * 0.5;
 
         const yMin = -0.2 * TREE_HEIGHT;
         const yMax = 0.8 * TREE_HEIGHT;
@@ -400,7 +406,18 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
   // Use vectors to avoid garbage collection
   const vec3 = useMemo(() => new THREE.Vector3(), []);
-  const quat = useMemo(() => new THREE.Quaternion(), []);
+  
+  // Update the active texture for the isolated focus mesh
+  useEffect(() => {
+    if (activeFocusIndex !== -1 && loadedTextures.length > 0) {
+        const targetOrn = ornamentData.find(o => o.id === activeFocusIndex);
+        if (targetOrn && targetOrn.type === OrnamentType.USER) {
+            setActiveTexture(loadedTextures[targetOrn.textureIndex]);
+        }
+    } else {
+        setActiveTexture(null);
+    }
+  }, [activeFocusIndex, loadedTextures, ornamentData]);
 
   useFrame((state, delta) => {
     if (!groupRef.current || !needlesRef.current) return;
@@ -436,6 +453,15 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     currentProgress.current = THREE.MathUtils.lerp(currentProgress.current, targetProgress, delta * 4.0);
     const p = currentProgress.current;
     const invP = 1 - p;
+
+    // --- PARTICLE SIZE LOGIC ---
+    // Chaos (p=0) -> 1.15x size
+    // Formed (p=1) -> 1.0x size
+    if (needlesMaterialRef.current) {
+        const baseSize = 0.06;
+        const sizeMultiplier = THREE.MathUtils.lerp(1.15, 1.0, p);
+        needlesMaterialRef.current.size = baseSize * sizeMultiplier;
+    }
 
     const targetFocus = isPhotoFocused ? 1 : 0;
     focusProgress.current = THREE.MathUtils.lerp(focusProgress.current, targetFocus, delta * 5.0);
@@ -555,6 +581,16 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
             // Interpolate Scale
             dummyObj.scale.lerpVectors(treeScaleVec, targetScaleVec, fp);
 
+            // SPECIAL LOGIC: HIDE THE INSTANCE, SHOW THE SEPARATE MESH
+            if (focusedMeshRef.current) {
+                // Apply current dummyObj transforms to the separate mesh
+                focusedMeshRef.current.position.copy(dummyObj.position);
+                focusedMeshRef.current.quaternion.copy(dummyObj.quaternion);
+                focusedMeshRef.current.scale.copy(dummyObj.scale);
+            }
+            // Shrink the instance to 0 to hide it
+            dummyObj.scale.set(0, 0, 0);
+
         } else {
             // Normal Tree State
             dummyObj.position.set(x, y, z);
@@ -632,6 +668,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
         
         {/* UPDATED MATERIAL: Matte, tiny particles */}
         <pointsMaterial 
+            ref={needlesMaterialRef}
             map={particleTexture}
             vertexColors 
             size={0.06} // VERY SMALL
@@ -644,10 +681,16 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
         />
       </points>
 
-      {/* Existing Ornaments */}
+      {/* Existing Ornaments - Sphere Material made super shiny for Red spheres */}
       <instancedMesh ref={sphereMeshRef} args={[undefined, undefined, counts.sphere]}>
         <sphereGeometry args={[1, 64, 64]} /> 
-        <meshPhysicalMaterial metalness={0.8} roughness={0.2} clearcoat={1.0} clearcoatRoughness={0.2} envMapIntensity={1.0} />
+        <meshPhysicalMaterial 
+            metalness={0.7} 
+            roughness={0.05} 
+            clearcoat={1.0} 
+            clearcoatRoughness={0.05} 
+            envMapIntensity={1.5} 
+        />
       </instancedMesh>
       <instancedMesh ref={boxMeshRef} args={[undefined, undefined, counts.box]}>
         <boxGeometry args={[1, 1, 1]} />
@@ -661,10 +704,53 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
       {/* Heptagrams only */}
       <instancedMesh ref={heptagramMeshRef} args={[undefined, undefined, counts.heptagram]} geometry={heptagramGeometry} material={heptagramMaterial} />
 
-      {/* User Photos */}
+      {/* User Photos (Instanced for tree mode) */}
       {loadedTextures.map((tex, i) => (
             <instancedMesh key={i} ref={el => { if(el) userMeshRefs.current[i] = el; }} args={[undefined, undefined, userCounts[i]]} geometry={framedGeometry} material={[goldFrameMaterial, new THREE.MeshStandardMaterial({ map: tex, metalness: 0.1, roughness: 0.4, color: '#ffffff' })]} />
       ))}
+
+      {/* 
+          Separate Mesh for Focused Photo 
+          - renderOrder={999} makes it render last.
+          - depthTest={false} makes it ignore z-buffer (always on top).
+          - transparent={false} ensures opacity
+      */}
+      {activeTexture && (
+          <mesh 
+            ref={focusedMeshRef} 
+            geometry={framedGeometry} 
+            renderOrder={999}
+            scale={[0,0,0]} // Starts hidden, updated in useFrame
+          >
+             {/* Material 0: Gold Frame */}
+             <meshPhysicalMaterial 
+                attach="material-0" 
+                color="#FFD700"
+                metalness={0.9}
+                roughness={0.3}
+                clearcoat={0.8}
+                envMapIntensity={1.2}
+                depthTest={false}
+                depthWrite={false}
+                transparent={false}
+                opacity={1}
+             />
+             {/* Material 1: Photo */}
+             <meshStandardMaterial 
+                attach="material-1" 
+                map={activeTexture} 
+                metalness={0.1} 
+                roughness={0.4} 
+                color="#ffffff"
+                depthTest={false}
+                depthWrite={false}
+                transparent={false}
+                opacity={1}
+                emissive="#333333" 
+                emissiveIntensity={0.2}
+             />
+          </mesh>
+      )}
     </group>
   );
 };
