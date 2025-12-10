@@ -25,12 +25,16 @@ const DETECTION_INTERVAL = 33; // ~30 FPS
 
 type GestureAction = 'LOCKED_FOCUS' | 'FORM' | 'CHAOS' | 'CONTROL' | 'NONE';
 
-export const HandController: React.FC<HandControllerProps> = ({ 
-  onStateChange, 
-  onZoomChange, 
-  onRotateChange,
-  onPhotoFocusChange
-}) => {
+export const HandController: React.FC<HandControllerProps> = (props) => {
+  const { onStateChange, onZoomChange, onRotateChange, onPhotoFocusChange } = props;
+  
+  // --- STALE CLOSURE FIX ---
+  // Store the latest props in a ref so the animation loop can always access the freshest callbacks
+  const propsRef = useRef(props);
+  useEffect(() => {
+    propsRef.current = props;
+  });
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState<string>('Initializing...');
@@ -80,7 +84,7 @@ export const HandController: React.FC<HandControllerProps> = ({
             videoRef.current.onloadedmetadata = () => {
                 videoRef.current?.play().catch(console.error);
             };
-            // Start the prediction loop immediately, it will skip AI if not ready
+            // Start the prediction loop immediately
             requestRef.current = requestAnimationFrame(predictLoop);
         }
       } catch (err) {
@@ -102,8 +106,7 @@ export const HandController: React.FC<HandControllerProps> = ({
 
         handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
           baseOptions: {
-            // Note: Google Storage URL might be blocked in CN. 
-            // If it fails, the catch block handles it, but camera still works.
+            // Using standard Google storage. If blocked, consider a proxy or local file.
             modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
             delegate: "GPU"
           },
@@ -117,7 +120,7 @@ export const HandController: React.FC<HandControllerProps> = ({
         if (isActive) setStatus(""); // AI Ready
       } catch (error) {
         console.error("AI Init Failed (Network?):", error);
-        if (isActive) setStatus("AI Offline (VPN needed)");
+        if (isActive) setStatus("AI Error (VPN?)");
       }
     };
 
@@ -135,7 +138,6 @@ export const HandController: React.FC<HandControllerProps> = ({
   }, []);
 
   const predictLoop = (time: number) => {
-    // Always keep looping so we can resume if AI loads late
     requestRef.current = requestAnimationFrame(predictLoop);
 
     // Throttle
@@ -206,6 +208,9 @@ export const HandController: React.FC<HandControllerProps> = ({
 
   const processGestures = (landmarksArray: NormalizedLandmark[][]): GestureAction => {
     const now = performance.now();
+    
+    // USE REFS TO CALL LATEST PROPS
+    const { onRotateChange, onStateChange, onZoomChange, onPhotoFocusChange } = propsRef.current;
 
     if (!landmarksArray || landmarksArray.length === 0) {
         // Decay velocity

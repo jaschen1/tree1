@@ -2,7 +2,7 @@ import React, { useRef, useMemo, useState, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { TreeState } from '../types';
-import { randomPointInCone, randomPointInSphere } from '../utils/math';
+import { randomPointInSphere } from '../utils/math';
 
 interface LuxuryTreeProps {
   treeState: TreeState;
@@ -11,14 +11,13 @@ interface LuxuryTreeProps {
   isPhotoFocused: boolean;
 }
 
-const NEEDLE_COUNT = 15000; 
-const ORNAMENT_COUNT = 180; // Adjusted count after removing white particles
+const NEEDLE_COUNT = 25000; // Increased count for smaller particles
+const ORNAMENT_COUNT = 180; 
 const TREE_HEIGHT = 12;
 const TREE_RADIUS = 4.5;
 const CHAOS_RADIUS = 15;
+const TREE_TIERS = 8; // Number of distinct layers for the pine look
 
-// Tree vertical bounds based on randomPointInCone logic
-// y goes from (0 - 0.2)*H to (1 - 0.2)*H -> -2.4 to 9.6
 const TREE_TOP_Y = 0.8 * TREE_HEIGHT; 
 
 enum OrnamentType {
@@ -32,17 +31,14 @@ enum OrnamentType {
 const SantaHat = () => {
     return (
         <group position={[0, TREE_TOP_Y + 0.2, 0]} rotation={[0.1, 0, 0.1]}>
-            {/* Brim */}
             <mesh position={[0, 0, 0]}>
                 <torusGeometry args={[0.5, 0.2, 16, 32]} />
                 <meshStandardMaterial color="#ffffff" roughness={1} />
             </mesh>
-            {/* Main Cone */}
             <mesh position={[0, 0.8, 0]}>
                 <coneGeometry args={[0.45, 1.8, 32]} />
                 <meshStandardMaterial color="#D40000" roughness={0.6} />
             </mesh>
-            {/* Tip Ball (slightly offset to look droopy) */}
             <mesh position={[0, 1.7, 0]}>
                 <sphereGeometry args={[0.22, 16, 16]} />
                 <meshStandardMaterial color="#ffffff" roughness={1} />
@@ -51,7 +47,6 @@ const SantaHat = () => {
     );
 };
 
-// Helper to create an irregular 7-pointed star shape
 const createHeptagramShape = () => {
     const shape = new THREE.Shape();
     const points = 7;
@@ -61,17 +56,12 @@ const createHeptagramShape = () => {
     for (let i = 0; i < points * 2; i++) {
         const angle = (i / (points * 2)) * Math.PI * 2;
         const isTip = i % 2 === 0;
-        
-        // Add "Irregularity" by varying the radius slightly per point
         const variance = Math.sin(i * 123.45) * 0.15; 
-        
         const r = isTip 
             ? outerRadiusBase + variance 
             : innerRadiusBase + variance * 0.5;
-
         const x = Math.cos(angle) * r;
         const y = Math.sin(angle) * r;
-
         if (i === 0) shape.moveTo(x, y);
         else shape.lineTo(x, y);
     }
@@ -79,7 +69,6 @@ const createHeptagramShape = () => {
     return shape;
 };
 
-// Double-sided photo frame with narrow gold border
 const createFramedGeometry = () => {
     const frameW = 1.6;
     const frameH = 2.0;
@@ -135,6 +124,42 @@ const createFramedGeometry = () => {
     return geo;
 };
 
+// Custom shape function for the Sawtooth/Pine Tree Look
+const randomPointInPineTree = (height: number, maxRadius: number, tiers: number): THREE.Vector3 => {
+    // 0 to 1 (Bottom to Top)
+    const normalizedH = Math.random(); 
+    
+    // Y position
+    const y = (normalizedH - 0.2) * height; // Shift down slightly
+
+    // --- Sawtooth Logic ---
+    // 1. Overall Taper (Cone shape foundation)
+    const overallTaper = 1 - normalizedH; 
+
+    // 2. Tier Logic
+    // Scale normalizedH by tiers (e.g., 0 to 8). 
+    // The decimal part is the progress within that specific tier.
+    const tierPos = normalizedH * tiers;
+    const tierProgress = tierPos % 1; // 0.0 (bottom of tier) -> 1.0 (top of tier)
+
+    // A pine branch sticks out at the bottom and tapers in at the top of the tier.
+    // So radius is larger when tierProgress is low.
+    const tierFlare = (1 - tierProgress); 
+
+    // Combine: The radius depends on how high we are overall (taper) AND where we are in the tier (flare)
+    // We blend them: mostly flare at bottom, but constrained by overall taper.
+    const currentMaxRadius = maxRadius * (overallTaper * 0.7 + tierFlare * 0.3 * overallTaper);
+
+    // Distribution: sqrt ensures uniform area filling, otherwise center is too dense
+    const r = Math.sqrt(Math.random()) * currentMaxRadius;
+    const angle = Math.random() * Math.PI * 2;
+
+    const x = Math.cos(angle) * r;
+    const z = Math.sin(angle) * r;
+
+    return new THREE.Vector3(x, y, z);
+};
+
 export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotationVelocity, userTextureUrls, isPhotoFocused }) => {
   const groupRef = useRef<THREE.Group>(null);
   const needlesRef = useRef<THREE.Points>(null);
@@ -148,30 +173,36 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
   const [loadedTextures, setLoadedTextures] = useState<THREE.Texture[]>([]);
 
-  // Texture for "Glass" look - SHARPER VERSION
-  const glassTexture = useMemo(() => {
+  // UPDATED TEXTURE: Small, sharp glow
+  const particleTexture = useMemo(() => {
     const canvas = document.createElement('canvas');
-    canvas.width = 64; 
-    canvas.height = 64;
+    canvas.width = 32; 
+    canvas.height = 32;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-        ctx.clearRect(0,0,64,64);
+        ctx.clearRect(0,0,32,32);
+        
+        const cx = 16;
+        const cy = 16;
+        const r = 14;
+
+        // Draw a tight radial gradient for a "sharp" glow
+        const grad = ctx.createRadialGradient(cx, cy, 2, cx, cy, r);
+        grad.addColorStop(0, 'rgba(255, 255, 255, 1)'); 
+        grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.8)');
+        grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.2)');
+        grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        
+        ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.arc(32, 32, 12, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255, 255, 255, 1.0)';
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
         ctx.fill();
-        const gradient = ctx.createRadialGradient(32, 32, 12, 32, 32, 32);
-        gradient.addColorStop(0, 'rgba(255, 255, 255, 0.8)'); 
-        gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');     
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, 64, 64);
     }
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
   }, []);
 
-  // Material adjustments: Reduced envMapIntensity and increased roughness slightly for less glare
   const goldFrameMaterial = useMemo(() => new THREE.MeshPhysicalMaterial({
     color: "#FFD700",
     metalness: 0.9,
@@ -181,7 +212,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
   }), []);
   
   const heptagramMaterial = useMemo(() => new THREE.MeshStandardMaterial({
-    color: "#CFB53B", // Old Gold
+    color: "#CFB53B", 
     metalness: 0.8,
     roughness: 0.5,
     envMapIntensity: 1.0
@@ -231,12 +262,14 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     const colors = new Float32Array(NEEDLE_COUNT * 3);
     
     const color1 = new THREE.Color("#4ade80"); 
-    const color2 = new THREE.Color("#10b981"); 
-    const color3 = new THREE.Color("#064e3b"); 
+    const color2 = new THREE.Color("#22c55e"); 
+    const color3 = new THREE.Color("#15803d"); 
     const tempColor = new THREE.Color();
 
     for (let i = 0; i < NEEDLE_COUNT; i++) {
-      const tPos = randomPointInCone(TREE_HEIGHT, TREE_RADIUS);
+      // Use Pine Tree Logic
+      const tPos = randomPointInPineTree(TREE_HEIGHT, TREE_RADIUS, TREE_TIERS);
+      
       target[i * 3] = tPos.x;
       target[i * 3 + 1] = tPos.y;
       target[i * 3 + 2] = tPos.z;
@@ -251,7 +284,8 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
       else if (r < 0.66) tempColor.copy(color2);
       else tempColor.copy(color3);
       
-      tempColor.offsetHSL(0, 0.1, (Math.random() - 0.5) * 0.2);
+      // Add slight hue shift
+      tempColor.offsetHSL(0, 0.05, (Math.random() - 0.5) * 0.1);
 
       colors[i * 3] = tempColor.r;
       colors[i * 3 + 1] = tempColor.g;
@@ -270,7 +304,9 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     const uCounts = new Array(Math.max(1, loadedTextures.length)).fill(0);
     
     for (let i = 0; i < ORNAMENT_COUNT; i++) {
-      let tPos = randomPointInCone(TREE_HEIGHT, TREE_RADIUS * 0.95);
+      // Use Pine Tree logic for Ornaments too, but slightly smaller radius so they sit inside/on the branches
+      let tPos = randomPointInPineTree(TREE_HEIGHT, TREE_RADIUS * 0.95, TREE_TIERS);
+
       const cPos = randomPointInSphere(CHAOS_RADIUS * 1.3);
       
       let type = OrnamentType.SPHERE;
@@ -282,6 +318,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
         textureIndex = Math.floor(Math.random() * loadedTextures.length);
         uCounts[textureIndex]++;
         
+        // Custom logic for User photos to ensure they spiral nicely
         const sectionR = Math.random();
         let normalizedH = 0.5; 
         if (sectionR < 0.15) normalizedH = Math.random() * 0.2;
@@ -290,10 +327,15 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
         const yMin = -0.2 * TREE_HEIGHT;
         const yMax = 0.8 * TREE_HEIGHT;
-        const yRange = yMax - yMin;
-        const finalY = yMin + normalizedH * yRange;
-        const distFromTip = yMax - finalY;
-        const currentRadius = (distFromTip / yRange) * TREE_RADIUS * 1.1; 
+        
+        // Approximate the pine radius at this height
+        const overallTaper = 1 - normalizedH; 
+        const tierPos = normalizedH * TREE_TIERS;
+        const tierProgress = tierPos % 1; 
+        const tierFlare = (1 - tierProgress); 
+        const currentRadius = TREE_RADIUS * 1.1 * (overallTaper * 0.7 + tierFlare * 0.3 * overallTaper);
+
+        const finalY = yMin + normalizedH * (yMax - yMin);
         const angle = Math.random() * Math.PI * 2;
         tPos = new THREE.Vector3(Math.cos(angle) * currentRadius, finalY, Math.sin(angle) * currentRadius);
 
@@ -335,7 +377,6 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
       let rotAxis = new THREE.Vector3(Math.random(), Math.random(), Math.random()).normalize();
       let rotSpeed = (Math.random() - 0.5) * 2.0;
 
-      // Override for FIXED items (Heptagrams)
       if (type === OrnamentType.HEPTAGRAM) {
           rotSpeed = 0; 
           rotAxis = new THREE.Vector3(0, 1, 0); 
@@ -397,13 +438,11 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     const time = state.clock.elapsedTime;
     const positions = needlesRef.current.geometry.attributes.position;
     
-    // Animate Needles
     for (let i = 0; i < NEEDLE_COUNT; i++) {
       let x = needleData.chaos[i * 3] * invP + needleData.target[i * 3] * p;
       let y = needleData.chaos[i * 3 + 1] * invP + needleData.target[i * 3 + 1] * p;
       let z = needleData.chaos[i * 3 + 2] * invP + needleData.target[i * 3 + 2] * p;
 
-      // SPATIAL WAVE for consistency
       if (p > 0.1) {
           const waveAmp = 0.05 * p; 
           const waveFreq = 1.5;
@@ -429,7 +468,6 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
         
         const isFixed = (orn.type === OrnamentType.HEPTAGRAM);
         
-        // Apply SAME Spatial Wave logic to ornaments to maintain relative distance
         if (p > 0.1) {
             const waveAmp = 0.05 * p; 
             const waveFreq = 1.5;
@@ -540,17 +578,18 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
           <bufferAttribute attach="attributes-position" count={NEEDLE_COUNT} array={needleData.chaos} itemSize={3} />
           <bufferAttribute attach="attributes-color" count={NEEDLE_COUNT} array={needleData.colors} itemSize={3} />
         </bufferGeometry>
-        {/* Adjusted Size and AlphaTest to prevent disappearing particles at distance */}
+        
+        {/* UPDATED MATERIAL: Small, glowing needles */}
         <pointsMaterial 
-            map={glassTexture}
+            map={particleTexture}
             vertexColors 
-            size={0.45} // Increased size to help visibility at distance
+            size={0.25} // Small size
             sizeAttenuation={true} 
             transparent={true} 
-            opacity={0.95} 
-            alphaTest={0.15} // Lower alphaTest prevents culling of small distant particles
+            opacity={1.0} 
+            alphaTest={0.01} 
             depthWrite={false}
-            blending={THREE.AdditiveBlending}
+            blending={THREE.AdditiveBlending} // Back to glow
         />
       </points>
 

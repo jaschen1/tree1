@@ -99,13 +99,12 @@ const SnowParticles = () => {
       const offsets = new Float32Array(count);
   
       for (let i = 0; i < count; i++) {
-        // Wider spread for snow
         const r = 20 + Math.random() * 80; 
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
         
         positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-        positions[i * 3 + 1] = (Math.random() - 0.5) * 60; // More vertical spread
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 60; 
         positions[i * 3 + 2] = r * Math.cos(phi);
   
         scales[i] = Math.random();
@@ -116,7 +115,7 @@ const SnowParticles = () => {
   
     const uniforms = useMemo(() => ({
       uTime: { value: 0 },
-      uColor: { value: new THREE.Color("#FFFFFF") } // Pure White
+      uColor: { value: new THREE.Color("#FFFFFF") } 
     }), []);
   
     useFrame((state) => {
@@ -149,16 +148,16 @@ const SnowParticles = () => {
               
               // Downward Drift for Snow
               float fallSpeed = 0.5 + aScale * 0.5;
-              pos.y -= mod(uTime * fallSpeed + aTimeOffset, 60.0) - 30.0; // Loop vertically
-              pos.x += sin(uTime * 0.3 + aTimeOffset) * 1.5; // Slight sway
+              pos.y -= mod(uTime * fallSpeed + aTimeOffset, 60.0) - 30.0; 
+              pos.x += sin(uTime * 0.3 + aTimeOffset) * 1.5; 
               
               vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
               gl_Position = projectionMatrix * mvPosition;
               
-              // Snow is slightly smaller but distinct
-              gl_PointSize = (2.0 * aScale + 0.5) * (40.0 / -mvPosition.z);
+              // INCREASED SIZE MULTIPLIER (2.0 -> 8.0) for much bigger snow
+              gl_PointSize = (8.0 * aScale + 2.0) * (40.0 / -mvPosition.z);
               
-              vAlpha = 0.4 + 0.6 * sin(uTime + aTimeOffset);
+              vAlpha = 0.6 + 0.4 * sin(uTime + aTimeOffset);
             }
           `}
           fragmentShader={`
@@ -169,7 +168,6 @@ const SnowParticles = () => {
               float dist = distance(gl_PointCoord, center);
               if (dist > 0.5) discard;
               
-              // Sharper center for snow
               float glow = 1.0 - (dist * 2.0);
               glow = pow(glow, 1.5);
               
