@@ -11,13 +11,13 @@ interface HandControllerProps {
 
 // Configuration
 const DOUBLE_PINCH_TIMING = 400; // ms
-const FIST_THRESHOLD = 0.20; // Increased from 0.18 to make it easier to trigger
-const CHAOS_SPREAD_SPEED_THRESHOLD = 0.015; // Slightly easier to trigger
+const FIST_THRESHOLD = 0.20; 
+const CHAOS_SPREAD_SPEED_THRESHOLD = 0.015; 
 
 // Interaction Config
-const ROTATION_THRESHOLD = 0.002; // Reduced deadzone for more responsiveness
+const ROTATION_THRESHOLD = 0.002; 
 const ZOOM_THRESHOLD = 0.005;      
-const ROTATION_SENSITIVITY = 25.0; // Adjusted for natural feel
+const ROTATION_SENSITIVITY = 25.0; 
 const ZOOM_SENSITIVITY = 2.0;       
 
 // Throttling for Mobile Performance
@@ -33,11 +33,10 @@ export const HandController: React.FC<HandControllerProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [status, setStatus] = useState<string>('Initializing AI...');
+  const [status, setStatus] = useState<string>('Initializing...');
   
   const requestRef = useRef<number>(0);
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
-  const lastVideoTimeRef = useRef<number>(-1);
   const lastProcessTimeRef = useRef<number>(0);
 
   // --- STATE MACHINES ---
@@ -57,9 +56,44 @@ export const HandController: React.FC<HandControllerProps> = ({
   useEffect(() => {
     let isActive = true;
 
-    const initMediaPipe = async () => {
+    // 1. Initialize Camera Immediately (Parallel Task)
+    const initCamera = async () => {
+      if (!videoRef.current) return;
       try {
-        setStatus("Loading Model...");
+        let stream: MediaStream;
+        try {
+            // Try user facing camera first
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { 
+                  facingMode: "user",
+                  width: { ideal: 640 },
+                  height: { ideal: 480 } 
+              }
+            });
+        } catch (e) {
+            console.warn("User camera failed, falling back...", e);
+            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        }
+        
+        if (isActive && videoRef.current) {
+            videoRef.current.srcObject = stream;
+            videoRef.current.onloadedmetadata = () => {
+                videoRef.current?.play().catch(console.error);
+            };
+            // Start the prediction loop immediately, it will skip AI if not ready
+            requestRef.current = requestAnimationFrame(predictLoop);
+        }
+      } catch (err) {
+        console.error("Camera access denied:", err);
+        if (isActive) setStatus("Camera Denied");
+      }
+    };
+
+    // 2. Initialize AI (Parallel Task)
+    const initAI = async () => {
+      try {
+        if(isActive) setStatus("Loading AI...");
+        
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
         );
@@ -68,6 +102,8 @@ export const HandController: React.FC<HandControllerProps> = ({
 
         handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
           baseOptions: {
+            // Note: Google Storage URL might be blocked in CN. 
+            // If it fails, the catch block handles it, but camera still works.
             modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
             delegate: "GPU"
           },
@@ -78,68 +114,35 @@ export const HandController: React.FC<HandControllerProps> = ({
           minTrackingConfidence: 0.5
         });
         
-        if (isActive) {
-            setStatus("Starting Camera...");
-            await startWebcam();
-        }
+        if (isActive) setStatus(""); // AI Ready
       } catch (error) {
-        console.error("Error initializing MediaPipe:", error);
-        setStatus("AI Init Failed");
+        console.error("AI Init Failed (Network?):", error);
+        if (isActive) setStatus("AI Offline (VPN needed)");
       }
     };
 
-    initMediaPipe();
+    initCamera();
+    initAI();
 
     return () => {
       isActive = false;
+      cancelAnimationFrame(requestRef.current);
       if (videoRef.current && videoRef.current.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach(t => t.stop());
       }
-      cancelAnimationFrame(requestRef.current);
     };
   }, []);
 
-  const startWebcam = async () => {
-    if (!videoRef.current) return;
-    try {
-      let stream: MediaStream;
-      
-      // 1. Prefer user-facing camera
-      try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { 
-                facingMode: "user",
-                width: { ideal: 640 }, // Lower res for better performance
-                height: { ideal: 480 } 
-            }
-          });
-      } catch (e) {
-          console.warn("User camera failed, trying fallback...", e);
-          // 2. Fallback to any camera
-          stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      }
-
-      videoRef.current.srcObject = stream;
-      videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().catch(e => console.error("Play error:", e));
-          setStatus(""); // Clear status on success
-      };
-
-      requestRef.current = requestAnimationFrame(predictLoop);
-    } catch (err) {
-      console.error("Webcam denied:", err);
-      setStatus("Camera Denied");
-    }
-  };
-
   const predictLoop = (time: number) => {
-    // Throttle Detection to ~30FPS to save GPU for Three.js
-    if (time - lastProcessTimeRef.current >= DETECTION_INTERVAL) {
-        lastProcessTimeRef.current = time;
-        detect();
-    }
+    // Always keep looping so we can resume if AI loads late
     requestRef.current = requestAnimationFrame(predictLoop);
+
+    // Throttle
+    if (time - lastProcessTimeRef.current < DETECTION_INTERVAL) return;
+    lastProcessTimeRef.current = time;
+
+    detect();
   };
 
   const detect = () => {
@@ -147,23 +150,21 @@ export const HandController: React.FC<HandControllerProps> = ({
     const canvas = canvasRef.current;
     const landmarker = handLandmarkerRef.current;
 
-    if (!video || !canvas || !landmarker) return;
-    if (video.paused || video.ended) return;
+    // If AI is not ready, we just return (but Camera is still running!)
+    if (!landmarker || !video || !canvas) return;
+    if (video.paused || video.ended || video.readyState < 2) return;
 
-    // Check if video has data
-    if (video.readyState < 2) return; 
-
-    // Resize canvas to match video (crucial for alignment)
+    // Resize canvas
     if (video.videoWidth > 0 && video.videoHeight > 0) {
         if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
         }
 
-        // Only detect if size is valid
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
+        // Run AI Detection
         const startTimeMs = performance.now();
         const results = landmarker.detectForVideo(video, startTimeMs);
 
@@ -175,7 +176,6 @@ export const HandController: React.FC<HandControllerProps> = ({
         
         if (results.landmarks) {
             for (const landmarks of results.landmarks) {
-                // Draw high-tech looking skeleton
                 drawingUtils.drawConnectors(landmarks, HandLandmarker.HAND_CONNECTIONS, {
                     color: '#00ff44', lineWidth: 3
                 });
@@ -208,7 +208,7 @@ export const HandController: React.FC<HandControllerProps> = ({
     const now = performance.now();
 
     if (!landmarksArray || landmarksArray.length === 0) {
-        // Decay velocity if no hand detected
+        // Decay velocity
         smoothedVelocity.current *= 0.8;
         if (Math.abs(smoothedVelocity.current) > 0.001) {
             onRotateChange(smoothedVelocity.current);
@@ -338,7 +338,7 @@ export const HandController: React.FC<HandControllerProps> = ({
         autoPlay 
         playsInline 
         muted 
-        // Style removed to rely on CSS. Do not use display: none
+        // Style handled in CSS (opacity)
       />
       <canvas ref={canvasRef} id="webcam-canvas" />
     </div>
