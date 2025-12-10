@@ -5,6 +5,9 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
+      // Use relative paths in the built assets so the app still loads when
+      // deployed under a non-root path (fixes the blank screen when assets 404).
+      base: './',
       server: {
         port: 3000,
         host: '0.0.0.0',
