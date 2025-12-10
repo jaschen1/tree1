@@ -1,6 +1,6 @@
 import React, { useState, Suspense, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { Environment, PerspectiveCamera } from '@react-three/drei';
+import { Environment, PerspectiveCamera, Html, useProgress } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
 import { TreeState } from './types';
 import { LuxuryTree } from './components/LuxuryTree';
@@ -10,6 +10,18 @@ import { AmbientParticles } from './components/AmbientParticles';
 import { Overlay } from './components/Overlay';
 import { HandController } from './components/HandController';
 import { CameraRig } from './components/CameraRig';
+
+// Simple Loader Component
+const Loader = () => {
+  const { progress } = useProgress();
+  return (
+    <Html center>
+      <div className="text-[#FFD700] font-serif tracking-widest text-lg">
+        {progress.toFixed(0)}% LOADED
+      </div>
+    </Html>
+  );
+};
 
 const App: React.FC = () => {
   const [treeState, setTreeState] = useState<TreeState>(TreeState.CHAOS);
@@ -63,8 +75,18 @@ const App: React.FC = () => {
       {/* 1. Canvas Layer */}
       <Canvas 
         dpr={[1, 2]} 
-        gl={{ antialias: false, toneMappingExposure: 1.5 }}
+        gl={{ 
+          antialias: false, 
+          toneMappingExposure: 1.5,
+          alpha: false, // Critical: Disable alpha to prevent transparent black screen
+          powerPreference: "high-performance",
+          stencil: false,
+          depth: true
+        }}
       >
+        {/* Explicit Background Color to ensure EffectComposer clears correctly */}
+        <color attach="background" args={['#000502']} />
+
         <PerspectiveCamera makeDefault position={[0, 4, 20]} fov={45} />
         <CameraRig zoomFactor={zoomFactor} />
 
@@ -81,7 +103,7 @@ const App: React.FC = () => {
         <pointLight position={[-10, 5, -10]} intensity={1} color="#00ff44" />
         <pointLight position={[0, -5, 5]} intensity={0.5} color="#ffd700" />
 
-        <Suspense fallback={null}>
+        <Suspense fallback={<Loader />}>
             <Environment preset="lobby" background={false} blur={0.6} />
             
             {/* Background Layer: Persistent drifting stars */}
