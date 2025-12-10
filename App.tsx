@@ -1,6 +1,6 @@
 import React, { useState, Suspense, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { Environment, PerspectiveCamera, Html, useProgress } from '@react-three/drei';
+import { PerspectiveCamera, Html, useProgress, Environment } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
 import { TreeState } from './types';
 import { LuxuryTree } from './components/LuxuryTree';
@@ -16,8 +16,8 @@ const Loader = () => {
   const { progress } = useProgress();
   return (
     <Html center>
-      <div className="text-[#FFD700] font-serif tracking-widest text-lg">
-        {progress.toFixed(0)}% LOADED
+      <div className="text-[#FFD700] font-serif tracking-widest text-lg bg-black/50 px-4 py-2 rounded border border-yellow-900/30 backdrop-blur-sm">
+        LOADING {progress.toFixed(0)}%
       </div>
     </Html>
   );
@@ -25,15 +25,13 @@ const Loader = () => {
 
 const App: React.FC = () => {
   const [treeState, setTreeState] = useState<TreeState>(TreeState.CHAOS);
-  const [zoomFactor, setZoomFactor] = useState(0.5); // 0.5 is default middle ground
+  const [zoomFactor, setZoomFactor] = useState(0.5); 
   const [userTextureUrls, setUserTextureUrls] = useState<string[]>([]);
   const [isPhotoFocused, setIsPhotoFocused] = useState(false);
   
-  // Ref for Y-axis rotation (spin) velocity
   const handRotationVelocity = useRef(0);
 
   const handleStateChangeFromHand = (newState: TreeState) => {
-    // Lock state changes if focusing photo
     if (isPhotoFocused) return;
     setTreeState(newState);
   };
@@ -50,13 +48,12 @@ const App: React.FC = () => {
     setTreeState(TreeState.FORMED);
   };
 
-  // We just pass a dummy toggle to Overlay if needed, or Overlay handles Generate separately
   const dummyToggle = () => {}; 
 
   return (
     <div className="relative w-full h-screen bg-[#000502] overflow-hidden touch-none">
       
-      {/* Hand Tracking Controller (Invisible/Overlay) */}
+      {/* Hand Tracking Controller */}
       <HandController 
         onStateChange={handleStateChangeFromHand}
         onZoomChange={(z) => {
@@ -74,66 +71,77 @@ const App: React.FC = () => {
 
       {/* 1. Canvas Layer */}
       <Canvas 
-        dpr={[1, 2]} 
+        dpr={[1, 1.5]} 
         gl={{ 
           antialias: false, 
-          toneMappingExposure: 1.5,
-          alpha: false, // Critical: Disable alpha to prevent transparent black screen
+          toneMappingExposure: 1.0, 
+          alpha: false, 
           powerPreference: "high-performance",
           stencil: false,
           depth: true
         }}
       >
-        {/* Explicit Background Color to ensure EffectComposer clears correctly */}
         <color attach="background" args={['#000502']} />
 
         <PerspectiveCamera makeDefault position={[0, 4, 20]} fov={45} />
         <CameraRig zoomFactor={zoomFactor} />
 
-        {/* Cinematic Lighting */}
-        <ambientLight intensity={0.2} color="#001100" />
+        {/* --- LIGHTING STRATEGY: HYBRID --- */}
+        
+        {/* 1. Base Lights: Instant load, ensures scene is never pitch black */}
+        <hemisphereLight intensity={0.2} color="#ffffff" groundColor="#000000" />
+        <ambientLight intensity={0.1} />
+        
         <spotLight 
             position={[10, 20, 10]} 
-            angle={0.3} 
+            angle={0.5} 
             penumbra={1} 
-            intensity={2} 
+            intensity={100} 
             color="#ffeebb" 
             castShadow 
+            distance={50}
+            decay={2}
         />
-        <pointLight position={[-10, 5, -10]} intensity={1} color="#00ff44" />
-        <pointLight position={[0, -5, 5]} intensity={0.5} color="#ffd700" />
+        <pointLight position={[-10, 5, -10]} intensity={50} color="#00ff44" distance={40} decay={2} />
+        <pointLight position={[0, -5, 10]} intensity={30} color="#ffd700" distance={30} decay={2} />
+
+        {/* 
+            2. High Quality Environment (Async) 
+            Wrapped in its OWN Suspense. If it hangs (network), 
+            it does NOT block the tree or particles from rendering.
+        */}
+        <Suspense fallback={null}>
+            <Environment 
+                preset="lobby" 
+                background={false} // Don't show the image as background, just use lighting
+                blur={0.6}         // High blur for "dreamy" look
+            />
+        </Suspense>
+
+        {/* Scene Content */}
+        <AmbientParticles />
+        <GoldDust treeState={treeState} />
+        <GoldenSpirals treeState={treeState} />
 
         <Suspense fallback={<Loader />}>
-            <Environment preset="lobby" background={false} blur={0.6} />
-            
-            {/* Background Layer: Persistent drifting stars */}
-            <AmbientParticles />
-            
-            {/* The Main Stars */}
             <LuxuryTree 
               treeState={treeState} 
               extraRotationVelocity={handRotationVelocity}
               userTextureUrls={userTextureUrls}
               isPhotoFocused={isPhotoFocused}
             />
-            
-            {/* The new non-chaotic Spiral Layer */}
-            <GoldenSpirals treeState={treeState} />
-
-            {/* Foreground interactive dust */}
-            <GoldDust treeState={treeState} />
         </Suspense>
 
-        {/* Post Processing for the "Trump-esque" Glow */}
-        {/* Multisampling disabled (0) to prevent black screen on mobile devices */}
+        {/* Post Processing for the Glow */}
         <EffectComposer enableNormalPass={false} multisampling={0}>
+            {/* Reduced bloom intensity for softer look */}
             <Bloom 
-                luminanceThreshold={0.7} 
+                luminanceThreshold={0.8} 
                 mipmapBlur 
-                intensity={1.2} 
+                intensity={0.8} 
                 radius={0.6}
             />
-            <Vignette eskil={false} offset={0.1} darkness={1.1} />
+            <Vignette eskil={false} offset={0.1} darkness={0.8} />
         </EffectComposer>
       </Canvas>
 
