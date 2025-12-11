@@ -13,7 +13,7 @@ interface LuxuryTreeProps {
 
 // Keep needle count high for density
 const NEEDLE_COUNT = 40000; 
-const ORNAMENT_COUNT = 180; 
+const STANDARD_ORNAMENT_COUNT = 150; // Fixed count for decorative items only
 const TREE_HEIGHT = 12;
 const TREE_RADIUS = 4.5;
 const CHAOS_RADIUS = 15;
@@ -309,33 +309,87 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
   const { ornamentData, counts, userCounts } = useMemo(() => {
     const data = [];
-    // UPDATED RED COLOR (Brighter #E60000 for better gloss)
     const sphereColors = [new THREE.Color("#FFD700"), new THREE.Color("#C5A000"), new THREE.Color("#E60000"), new THREE.Color("#004225"), new THREE.Color("#C0C0C0")];
     const boxColors = [new THREE.Color("#8B0000"), new THREE.Color("#FFFFFF"), new THREE.Color("#D4AF37")];
     const gemColors = [new THREE.Color("#FFFFFF"), new THREE.Color("#E0FFFF")];
 
     let sCount = 0, bCount = 0, gCount = 0, hCount = 0;
-    const uCounts = new Array(Math.max(1, loadedTextures.length)).fill(0);
     
-    for (let i = 0; i < ORNAMENT_COUNT; i++) {
-      // Use Pine Tree logic for Ornaments too, but slightly smaller radius so they sit inside/on the branches
-      let tPos = randomPointInPineTree(TREE_HEIGHT, TREE_RADIUS * 0.95, TREE_TIERS);
+    // We want exactly 1 instance per loaded texture
+    const uCounts = new Array(loadedTextures.length).fill(1);
+    
+    let currentId = 0;
 
+    // 1. Generate Standard Ornaments
+    for (let i = 0; i < STANDARD_ORNAMENT_COUNT; i++) {
+      let tPos = randomPointInPineTree(TREE_HEIGHT, TREE_RADIUS * 0.95, TREE_TIERS);
+      const chaosPos = randomPointInSphere(CHAOS_RADIUS * 1.3); // Loose chaos for standard items
+
+      // Pick type (excluding USER)
       let type = OrnamentType.SPHERE;
       const rand = Math.random();
-      let textureIndex = -1;
-      let chaosPos = new THREE.Vector3();
+      if (rand < 0.15) { type = OrnamentType.HEPTAGRAM; hCount++; }
+      else if (rand < 0.50) { type = OrnamentType.SPHERE; sCount++; } 
+      else if (rand < 0.75) { type = OrnamentType.BOX; bCount++; } 
+      else { type = OrnamentType.GEM; gCount++; }
 
-      if (loadedTextures.length > 0 && rand > 0.85) {
-        type = OrnamentType.USER;
-        textureIndex = Math.floor(Math.random() * loadedTextures.length);
-        uCounts[textureIndex]++;
-        
-        // SPECIAL CHAOS LOGIC FOR USERS: Tighter cluster
-        // Use 0.5 multiplier instead of 1.3 to keep them dense in chaos mode
-        chaosPos = randomPointInSphere(CHAOS_RADIUS * 0.5);
+      let color = new THREE.Color();
+      let scale = new THREE.Vector3(1, 1, 1);
+      const baseScale = 0.18 + Math.random() * 0.12; 
 
-        // UPDATED: Distribution Logic to concentrate in middle (0.25 to 0.75)
+      if (type === OrnamentType.SPHERE) {
+        color = sphereColors[Math.floor(Math.random() * sphereColors.length)];
+        scale.setScalar(baseScale);
+      } else if (type === OrnamentType.BOX) {
+        color = boxColors[Math.floor(Math.random() * boxColors.length)];
+        const sx = baseScale * (0.8 + Math.random() * 0.4);
+        scale.set(sx, sx, sx);
+      } else if (type === OrnamentType.GEM) {
+        color = gemColors[Math.floor(Math.random() * gemColors.length)];
+        scale.setScalar(baseScale * 0.8); 
+      } else if (type === OrnamentType.HEPTAGRAM) {
+        color = new THREE.Color("#CFB53B"); 
+        scale.setScalar(baseScale * 0.9); 
+      }
+
+      let localIndex = 0;
+      if (type === OrnamentType.SPHERE) localIndex = sCount - 1;
+      if (type === OrnamentType.BOX) localIndex = bCount - 1;
+      if (type === OrnamentType.GEM) localIndex = gCount - 1;
+      if (type === OrnamentType.HEPTAGRAM) localIndex = hCount - 1;
+
+      let rotAxis = new THREE.Vector3(Math.random(), Math.random(), Math.random()).normalize();
+      let rotSpeed = (Math.random() - 0.5) * 2.0;
+      if (type === OrnamentType.HEPTAGRAM) {
+          rotSpeed = 0; 
+          rotAxis = new THREE.Vector3(0, 1, 0); 
+      }
+
+      data.push({
+        id: currentId++, 
+        tPos, 
+        cPos: chaosPos, 
+        type, 
+        color, 
+        scale, 
+        textureIndex: -1, 
+        localIndex,
+        phase: Math.random() * Math.PI * 2, 
+        rotSpeed,
+        rotationAxis: rotAxis
+      });
+    }
+
+    // 2. Generate User Ornaments (Exactly one per texture)
+    loadedTextures.forEach((_, i) => {
+        const type = OrnamentType.USER;
+        const textureIndex = i;
+        const localIndex = 0; // Only 1 instance per texture mesh
+
+        // Special Chaos Logic: Tighter cluster
+        const chaosPos = randomPointInSphere(CHAOS_RADIUS * 0.5);
+
+        // Special Tree Position: Middle band distribution
         const r1 = (Math.random() + Math.random()) / 2; 
         const normalizedH = 0.25 + r1 * 0.5;
 
@@ -350,69 +404,35 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
         const finalY = yMin + normalizedH * (yMax - yMin);
         const angle = Math.random() * Math.PI * 2;
-        tPos = new THREE.Vector3(Math.cos(angle) * currentRadius, finalY, Math.sin(angle) * currentRadius);
+        const tPos = new THREE.Vector3(Math.cos(angle) * currentRadius, finalY, Math.sin(angle) * currentRadius);
 
-      } else {
-        // Standard Chaos for others
-        chaosPos = randomPointInSphere(CHAOS_RADIUS * 1.3);
+        const baseScale = 0.18 + Math.random() * 0.12;
+        const scale = new THREE.Vector3().setScalar(baseScale * 3.0);
+        
+        const rotAxis = new THREE.Vector3(Math.random(), Math.random(), Math.random()).normalize();
+        const rotSpeed = (Math.random() - 0.5) * 2.0;
 
-        if (rand < 0.15) { type = OrnamentType.HEPTAGRAM; hCount++; }
-        else if (rand < 0.50) { type = OrnamentType.SPHERE; sCount++; } 
-        else if (rand < 0.75) { type = OrnamentType.BOX; bCount++; } 
-        else { type = OrnamentType.GEM; gCount++; }
-      }
-
-      let color = new THREE.Color();
-      let scale = new THREE.Vector3(1, 1, 1);
-      
-      const baseScale = 0.18 + Math.random() * 0.12; 
-
-      if (type === OrnamentType.SPHERE) {
-        color = sphereColors[Math.floor(Math.random() * sphereColors.length)];
-        scale.setScalar(baseScale);
-      } else if (type === OrnamentType.BOX) {
-        color = boxColors[Math.floor(Math.random() * boxColors.length)];
-        const sx = baseScale * (0.8 + Math.random() * 0.4);
-        scale.set(sx, sx, sx);
-      } else if (type === OrnamentType.GEM) {
-        color = gemColors[Math.floor(Math.random() * gemColors.length)];
-        scale.setScalar(baseScale * 0.8); 
-      } else if (type === OrnamentType.USER) {
-        scale.setScalar(baseScale * 3.0); 
-      } else if (type === OrnamentType.HEPTAGRAM) {
-        color = new THREE.Color("#CFB53B"); 
-        scale.setScalar(baseScale * 0.9); 
-      }
-
-      let localIndex = 0;
-      if (type === OrnamentType.SPHERE) localIndex = sCount - 1;
-      if (type === OrnamentType.BOX) localIndex = bCount - 1;
-      if (type === OrnamentType.GEM) localIndex = gCount - 1;
-      if (type === OrnamentType.USER) localIndex = uCounts[textureIndex] - 1;
-      if (type === OrnamentType.HEPTAGRAM) localIndex = hCount - 1;
-
-      let rotAxis = new THREE.Vector3(Math.random(), Math.random(), Math.random()).normalize();
-      let rotSpeed = (Math.random() - 0.5) * 2.0;
-
-      if (type === OrnamentType.HEPTAGRAM) {
-          rotSpeed = 0; 
-          rotAxis = new THREE.Vector3(0, 1, 0); 
-      }
-
-      data.push({
-        id: i, tPos, cPos: chaosPos, type, color, scale, textureIndex, localIndex,
-        phase: Math.random() * Math.PI * 2, 
-        rotSpeed,
-        rotationAxis: rotAxis
-      });
-    }
+        data.push({
+            id: currentId++, 
+            tPos, 
+            cPos: chaosPos, 
+            type, 
+            color: new THREE.Color(), // Unused for user
+            scale, 
+            textureIndex, 
+            localIndex,
+            phase: Math.random() * Math.PI * 2, 
+            rotSpeed,
+            rotationAxis: rotAxis
+        });
+    });
 
     return { 
         ornamentData: data, 
         counts: { sphere: sCount, box: bCount, gem: gCount, heptagram: hCount }, 
         userCounts: uCounts 
     };
-  }, [loadedTextures.length]);
+  }, [loadedTextures]); // Depend on loadedTextures array (new array reference when upload happens)
 
   const currentProgress = useRef(0);
   const focusProgress = useRef(0);
