@@ -70,7 +70,7 @@ const createHeptagramShape = () => {
     return shape;
 };
 
-const createPolaroidGeometry = () => {
+const createDoubleSidedPolaroidGeometry = () => {
     // Polaroid Dimensions Ratio
     const cardW = 1.4;
     const cardH = 1.75;
@@ -79,51 +79,60 @@ const createPolaroidGeometry = () => {
     const imageW = 1.25;
     const imageH = 1.25;
     
-    // Margins
-    // Side = (1.4 - 1.25)/2 = 0.075
-    // Top = 0.1
-    // Bottom = 1.75 - 1.25 - 0.1 = 0.4
-
-    // Center 0,0
-    // Top Edge Y = 1.75 / 2 = 0.875
-    // Image Top Y = 0.875 - 0.1 = 0.775
-    // Image Center Y = 0.775 - (1.25 / 2) = 0.775 - 0.625 = 0.15
-
+    // 1. Frame (Box)
     const box = new THREE.BoxGeometry(cardW, cardH, cardD);
     const boxNonIndexed = box.toNonIndexed();
     
+    // 2. Front Image (Plane)
     const front = new THREE.PlaneGeometry(imageW, imageH);
-    front.translate(0, 0.15, cardD/2 + 0.002); // Slight offset
+    front.translate(0, 0.15, cardD/2 + 0.002); // Slightly in front
     const frontNonIndexed = front.toNonIndexed();
+
+    // 3. Back Image (Plane) - Rotated 180Y to face back
+    const back = new THREE.PlaneGeometry(imageW, imageH);
+    back.rotateY(Math.PI); 
+    back.translate(0, 0.15, -cardD/2 - 0.002); // Slightly behind
+    const backNonIndexed = back.toNonIndexed();
     
     const boxCount = boxNonIndexed.attributes.position.count;
     const frontCount = frontNonIndexed.attributes.position.count;
+    const backCount = backNonIndexed.attributes.position.count;
     
-    const positions = new Float32Array((boxCount + frontCount) * 3);
-    const normals = new Float32Array((boxCount + frontCount) * 3);
-    const uvs = new Float32Array((boxCount + frontCount) * 2);
+    const totalCount = boxCount + frontCount + backCount;
+    
+    const positions = new Float32Array(totalCount * 3);
+    const normals = new Float32Array(totalCount * 3);
+    const uvs = new Float32Array(totalCount * 2);
 
     let vOffset = 0;
     
-    // Group 1: The Card Base (Box)
+    // Copy Box
     positions.set(boxNonIndexed.attributes.position.array, vOffset * 3);
     normals.set(boxNonIndexed.attributes.normal.array, vOffset * 3);
     uvs.set(boxNonIndexed.attributes.uv.array, vOffset * 2);
     vOffset += boxCount;
 
-    // Group 2: The Image (Plane)
+    // Copy Front
     positions.set(frontNonIndexed.attributes.position.array, vOffset * 3);
     normals.set(frontNonIndexed.attributes.normal.array, vOffset * 3);
     uvs.set(frontNonIndexed.attributes.uv.array, vOffset * 2);
     vOffset += frontCount;
 
+    // Copy Back
+    positions.set(backNonIndexed.attributes.position.array, vOffset * 3);
+    normals.set(backNonIndexed.attributes.normal.array, vOffset * 3);
+    uvs.set(backNonIndexed.attributes.uv.array, vOffset * 2);
+    
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
 
-    geo.addGroup(0, boxCount, 0); // Material 0: Card Base
-    geo.addGroup(boxCount, frontCount, 1); // Material 1: Image
+    // Material Groups
+    // Group 0: Box (Frame) -> Material Index 0
+    geo.addGroup(0, boxCount, 0); 
+    // Group 1: Front & Back Images -> Material Index 1
+    geo.addGroup(boxCount, frontCount + backCount, 1); 
 
     return geo;
 };
@@ -207,11 +216,12 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     return tex;
   }, []);
 
-  const polaroidBaseMaterial = useMemo(() => new THREE.MeshStandardMaterial({
-    color: "#f0f0f0",
-    metalness: 0.1,
-    roughness: 0.8,
-    envMapIntensity: 0.5
+  // UPDATED MATERIAL: Gold Metal for the Frame
+  const goldFrameMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    color: "#FFD700",
+    metalness: 0.8,
+    roughness: 0.15,
+    envMapIntensity: 1.0
   }), []);
   
   const heptagramMaterial = useMemo(() => new THREE.MeshStandardMaterial({
@@ -221,7 +231,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     envMapIntensity: 1.0
   }), []);
 
-  const polaroidGeometry = useMemo(() => createPolaroidGeometry(), []);
+  const polaroidGeometry = useMemo(() => createDoubleSidedPolaroidGeometry(), []);
   
   const heptagramGeometry = useMemo(() => {
       const shape = createHeptagramShape();
@@ -311,27 +321,27 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
       // Use Pine Tree logic for Ornaments too, but slightly smaller radius so they sit inside/on the branches
       let tPos = randomPointInPineTree(TREE_HEIGHT, TREE_RADIUS * 0.95, TREE_TIERS);
 
-      const cPos = randomPointInSphere(CHAOS_RADIUS * 1.3);
-      
       let type = OrnamentType.SPHERE;
       const rand = Math.random();
       let textureIndex = -1;
-      
+      let chaosPos = new THREE.Vector3();
+
       if (loadedTextures.length > 0 && rand > 0.85) {
         type = OrnamentType.USER;
         textureIndex = Math.floor(Math.random() * loadedTextures.length);
         uCounts[textureIndex]++;
         
+        // SPECIAL CHAOS LOGIC FOR USERS: Tighter cluster
+        // Use 0.5 multiplier instead of 1.3 to keep them dense in chaos mode
+        chaosPos = randomPointInSphere(CHAOS_RADIUS * 0.5);
+
         // UPDATED: Distribution Logic to concentrate in middle (0.25 to 0.75)
-        // Triangle distribution centered at 0.5
         const r1 = (Math.random() + Math.random()) / 2; 
-        // Map 0..1 to 0.25..0.75
         const normalizedH = 0.25 + r1 * 0.5;
 
         const yMin = -0.2 * TREE_HEIGHT;
         const yMax = 0.8 * TREE_HEIGHT;
         
-        // Approximate the pine radius at this height
         const overallTaper = 1 - normalizedH; 
         const tierPos = normalizedH * TREE_TIERS;
         const tierProgress = tierPos % 1; 
@@ -343,6 +353,9 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
         tPos = new THREE.Vector3(Math.cos(angle) * currentRadius, finalY, Math.sin(angle) * currentRadius);
 
       } else {
+        // Standard Chaos for others
+        chaosPos = randomPointInSphere(CHAOS_RADIUS * 1.3);
+
         if (rand < 0.15) { type = OrnamentType.HEPTAGRAM; hCount++; }
         else if (rand < 0.50) { type = OrnamentType.SPHERE; sCount++; } 
         else if (rand < 0.75) { type = OrnamentType.BOX; bCount++; } 
@@ -352,7 +365,6 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
       let color = new THREE.Color();
       let scale = new THREE.Vector3(1, 1, 1);
       
-      // SMALLER ORNAMENTS AGAIN
       const baseScale = 0.18 + Math.random() * 0.12; 
 
       if (type === OrnamentType.SPHERE) {
@@ -388,7 +400,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
       }
 
       data.push({
-        id: i, tPos, cPos, type, color, scale, textureIndex, localIndex,
+        id: i, tPos, cPos: chaosPos, type, color, scale, textureIndex, localIndex,
         phase: Math.random() * Math.PI * 2, 
         rotSpeed,
         rotationAxis: rotAxis
@@ -708,7 +720,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
 
       {/* User Photos (Instanced for tree mode) - Using Polaroid Style */}
       {loadedTextures.map((tex, i) => (
-            <instancedMesh key={i} ref={el => { if(el) userMeshRefs.current[i] = el; }} args={[undefined, undefined, userCounts[i]]} geometry={polaroidGeometry} material={[polaroidBaseMaterial, new THREE.MeshStandardMaterial({ map: tex, metalness: 0.1, roughness: 0.4, color: '#ffffff' })]} />
+            <instancedMesh key={i} ref={el => { if(el) userMeshRefs.current[i] = el; }} args={[undefined, undefined, userCounts[i]]} geometry={polaroidGeometry} material={[goldFrameMaterial, new THREE.MeshStandardMaterial({ map: tex, metalness: 0.1, roughness: 0.4, color: '#ffffff' })]} />
       ))}
 
       {/* 
@@ -725,13 +737,13 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
             renderOrder={9999}
             scale={[0,0,0]} // Starts hidden, updated in useFrame
           >
-             {/* Material 0: Polaroid White Base */}
+             {/* Material 0: Gold Frame Base */}
              <meshStandardMaterial 
                 attach="material-0" 
-                color="#f0f0f0"
-                metalness={0.1}
-                roughness={0.8}
-                envMapIntensity={0.5}
+                color="#FFD700"
+                metalness={0.8}
+                roughness={0.15}
+                envMapIntensity={1.0}
                 depthTest={false}
                 depthWrite={false}
                 transparent={true}
