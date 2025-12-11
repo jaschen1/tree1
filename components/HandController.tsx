@@ -11,7 +11,6 @@ interface HandControllerProps {
 
 // Configuration
 const DOUBLE_PINCH_TIMING = 400; // ms
-const FIST_THRESHOLD = 0.20; 
 const CHAOS_SPREAD_SPEED_THRESHOLD = 0.015; 
 
 // Interaction Config
@@ -258,15 +257,25 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
         return 'CHAOS';
     }
 
-    // --- 2. FORM (Fist) ---
-    const checkFist = (hand: NormalizedLandmark[]) => {
+    // --- 2. FORM (Strict Fist) ---
+    // Refactored: Only triggers when strictly fist.
+    const checkStrictFist = (hand: NormalizedLandmark[]) => {
         const wrist = hand[0];
-        const tips = [hand[8], hand[12], hand[16], hand[20]]; 
-        const avgTipDist = tips.reduce((acc, tip) => acc + Math.hypot(tip.x - wrist.x, tip.y - wrist.y), 0) / 4;
-        return avgTipDist < FIST_THRESHOLD;
+        // Index Tip(8), Middle Tip(12), Ring Tip(16), Pinky Tip(20)
+        const fingertipIndices = [8, 12, 16, 20];
+        
+        // Threshold for "Strict" fist: Fingertips must be very close to wrist/palm center.
+        // 0.16 is roughly the radius of a tight fist in normalized coordinates.
+        const STRICT_FOLD_THRESHOLD = 0.16; 
+
+        return fingertipIndices.every(idx => {
+            const tip = hand[idx];
+            const dist = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+            return dist < STRICT_FOLD_THRESHOLD;
+        });
     };
 
-    if (checkFist(hand1) || (hand2 && checkFist(hand2))) {
+    if (checkStrictFist(hand1) || (hand2 && checkStrictFist(hand2))) {
         onStateChange(TreeState.FORMED);
         return 'FORM';
     }

@@ -42,7 +42,7 @@ export const Overlay: React.FC<OverlayProps> = ({ currentState, onToggle, onUplo
       {/* Header */}
       <header className="text-center mt-4 pointer-events-auto w-full">
         <h1 
-            className="text-5xl md:text-8xl font-bold tracking-wide" 
+            className="text-5xl md:text-8xl font-extrabold tracking-wide" 
             style={{
                 fontFamily: '"Pinyon Script", cursive',
                 // Complex gradient for metallic luster
@@ -51,25 +51,39 @@ export const Overlay: React.FC<OverlayProps> = ({ currentState, onToggle, onUplo
                 WebkitBackgroundClip: 'text',
                 WebkitTextFillColor: 'transparent',
                 filter: 'drop-shadow(0px 2px 4px rgba(0,0,0,0.8))',
-                animation: 'metallicShine 4s linear infinite' // Rhythmic animation
+                animation: 'metallicShine 4s linear infinite', // Rhythmic animation
+                textShadow: '0 0 2px rgba(170, 119, 28, 0.5)' // Added text-shadow to simulate extra boldness
             }}
         >
           Merry Christmas
         </h1>
         
-        {/* User Input Subtitle - Completely Centered, No Underline */}
-        <div className="flex items-center justify-center gap-0 mt-2 w-full text-emerald-400 text-sm md:text-lg tracking-[0.2em] font-light italic" style={{ fontFamily: '"Playfair Display", serif' }}>
-            <span>Especially for</span>
+       {/* User Input Subtitle */}
+       {/* Changes: Green color (#4ade80), Playfair Display font (Normal Serif), Centered */}
+        <div className="flex items-center justify-center gap-2 mt-2 w-full text-[#4ade80] text-xl md:text-2xl tracking-[0.1em]" style={{ fontFamily: '"Playfair Display", serif' }}>
+            <input 
+                type="text" 
+                value="Especially for"
+                readOnly
+                className="bg-transparent text-right focus:outline-none cursor-default select-none"
+                style={{ 
+                    width: 'auto', 
+                    minWidth: '120px',
+                    fontFamily: 'inherit',
+                    border: 'none',
+                    padding: 0
+                }}
+            />
             <input 
                 type="text" 
                 value={recipientName}
                 onChange={(e) => setRecipientName(e.target.value)}
                 placeholder="[Name]"
-                className="bg-transparent text-center focus:outline-none placeholder-emerald-400/30"
+                className="bg-transparent text-left focus:outline-none placeholder-[#4ade80]/50"
                 style={{ 
                     width: 'auto', 
                     minWidth: '80px',
-                    maxWidth: '200px',
+                    maxWidth: '300px',
                     fontFamily: 'inherit',
                     border: 'none',
                     padding: 0
@@ -102,7 +116,7 @@ export const Overlay: React.FC<OverlayProps> = ({ currentState, onToggle, onUplo
             text-[#FFD700] font-bold font-serif text-sm md:text-md tracking-[0.1em] uppercase
             transition-all duration-500 ease-out
             group overflow-hidden rounded-md
-            bg-gradient-to-r from-[#001a0b]/95 to-[#000]/95 backdrop-blur-md
+            bg-black/60 backdrop-blur-md
             hover:text-white hover:border-[#FBF5B7] hover:shadow-[0_0_20px_rgba(212,175,55,0.4)]
             flex justify-center items-center
           `}

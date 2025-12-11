@@ -91,7 +91,7 @@ const GoldParticles = () => {
 
 const SnowParticles = () => {
     const pointsRef = useRef<THREE.Points>(null);
-    const count = 1500; 
+    const count = 5000; // Increased from 1500 to 5000
   
     const { positions, scales, offsets } = useMemo(() => {
       const positions = new Float32Array(count * 3);
@@ -147,15 +147,18 @@ const SnowParticles = () => {
               vec3 pos = position;
               
               // Downward Drift for Snow
-              float fallSpeed = 0.5 + aScale * 0.5;
+              // Increased speed significantly (was 0.5 + aScale * 0.5)
+              float fallSpeed = 2.5 + aScale * 2.5; 
               pos.y -= mod(uTime * fallSpeed + aTimeOffset, 60.0) - 30.0; 
-              pos.x += sin(uTime * 0.3 + aTimeOffset) * 1.5; 
+              
+              // Faster horizontal sway
+              pos.x += sin(uTime * 1.0 + aTimeOffset) * 1.5; 
               
               vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
               gl_Position = projectionMatrix * mvPosition;
               
-              // INCREASED SIZE MULTIPLIER (2.0 -> 8.0) for much bigger snow
-              gl_PointSize = (8.0 * aScale + 2.0) * (40.0 / -mvPosition.z);
+              // REDUCED SIZE MULTIPLIER (was 8.0/2.0) for finer dots
+              gl_PointSize = (3.0 * aScale + 1.0) * (40.0 / -mvPosition.z);
               
               vAlpha = 0.6 + 0.4 * sin(uTime + aTimeOffset);
             }

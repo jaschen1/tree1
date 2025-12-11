@@ -51,7 +51,7 @@ const App: React.FC = () => {
   const dummyToggle = () => {}; 
 
   return (
-    <div className="relative w-full h-screen bg-[#000502] overflow-hidden touch-none">
+    <div className="relative w-full h-screen bg-black overflow-hidden touch-none">
       
       {/* Hand Tracking Controller */}
       <HandController 
@@ -81,7 +81,9 @@ const App: React.FC = () => {
           depth: true
         }}
       >
-        <color attach="background" args={['#000502']} />
+        <color attach="background" args={['#000000']} />
+        {/* Adjusted fog to ensure visibility at max camera distance (65) */}
+        <fog attach="fog" args={['#000000', 20, 100]} />
 
         <PerspectiveCamera makeDefault position={[0, 4, 20]} fov={45} />
         <CameraRig zoomFactor={zoomFactor} />

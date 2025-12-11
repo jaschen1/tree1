@@ -22,3 +22,22 @@ export interface OrnamentData {
   type: 'box' | 'ball' | 'light';
   color: Color;
 }
+
+// Augment global JSX namespace to include React Three Fiber elements
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      [elemName: string]: any;
+    }
+  }
+}
+
+// Augment React's JSX namespace (crucial for modern React/TS setups and R3F)
+import 'react';
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements {
+      [elemName: string]: any;
+    }
+  }
+}
