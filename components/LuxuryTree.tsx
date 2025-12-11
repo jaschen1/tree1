@@ -386,8 +386,26 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
         const textureIndex = i;
         const localIndex = 0; // Only 1 instance per texture mesh
 
-        // Special Chaos Logic: Tighter cluster
-        const chaosPos = randomPointInSphere(CHAOS_RADIUS * 0.5);
+        // Special Chaos Logic: Gaussian Distribution (Normal Distribution)
+        // Box-Muller transform to get normal distribution
+        const u1 = Math.max(0.000001, Math.random());
+        const u2 = Math.random();
+        const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+        const z1 = Math.sqrt(-2.0 * Math.log(u1)) * Math.sin(2.0 * Math.PI * u2);
+        const u3 = Math.max(0.000001, Math.random());
+        const u4 = Math.random();
+        const z2 = Math.sqrt(-2.0 * Math.log(u3)) * Math.cos(2.0 * Math.PI * u4);
+
+        // Parameters for spread
+        const spreadXZ = CHAOS_RADIUS * 0.45; // Horizontal spread
+        const spreadY = TREE_HEIGHT * 0.5;    // Vertical spread
+
+        // Apply
+        const cx = z0 * spreadXZ;
+        const cy = (TREE_HEIGHT * 0.5) + z1 * spreadY; // Centered vertically on tree
+        const cz = z2 * spreadXZ;
+
+        const chaosPos = new THREE.Vector3(cx, cy, cz);
 
         // Special Tree Position: Middle band distribution
         const r1 = (Math.random() + Math.random()) / 2; 
@@ -523,7 +541,8 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     positions.needsUpdate = true;
     
     const globalScale = THREE.MathUtils.lerp(1.5, 1.0, p);
-    const userShrinkFactor = THREE.MathUtils.lerp(1.5, 0.3, p);
+    // REDUCED SCALE IN CHAOS MODE: Lerp from 1.05 (was 1.5) to 0.3
+    const userShrinkFactor = THREE.MathUtils.lerp(1.05, 0.3, p);
 
     ornamentData.forEach((orn) => {
         // Base Tree Position
