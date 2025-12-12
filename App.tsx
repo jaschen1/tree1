@@ -8,7 +8,6 @@ import { GoldDust } from './components/GoldDust';
 import { GoldenSpirals } from './components/GoldenSpirals';
 import { AmbientParticles } from './components/AmbientParticles';
 import { Overlay } from './components/Overlay';
-import { HandController } from './components/HandController';
 import { CameraRig } from './components/CameraRig';
 
 // Simple Loader Component
@@ -29,11 +28,36 @@ const App: React.FC = () => {
   const [userTextureUrls, setUserTextureUrls] = useState<string[]>([]);
   const [isPhotoFocused, setIsPhotoFocused] = useState(false);
   
-  const handRotationVelocity = useRef(0);
+  // Hand rotation replaced by mouse rotation
+  const rotationVelocity = useRef(0);
+  
+  // Mouse/Touch Logic
+  const isDragging = useRef(false);
+  const lastX = useRef(0);
 
-  const handleStateChangeFromHand = (newState: TreeState) => {
+  const handlePointerDown = (e: React.PointerEvent) => {
+    // Only drag if not interacting with UI (though UI usually stops propagation, this is a safety check)
+    isDragging.current = true;
+    lastX.current = e.clientX;
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!isDragging.current || isPhotoFocused) return;
+    const deltaX = e.clientX - lastX.current;
+    lastX.current = e.clientX;
+    // Rotate tree based on drag
+    rotationVelocity.current = deltaX * 0.005; 
+  };
+
+  const handlePointerUp = () => {
+    isDragging.current = false;
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
     if (isPhotoFocused) return;
-    setTreeState(newState);
+    // Zoom logic: Scroll up (negative delta) to zoom in (increase factor)
+    const delta = e.deltaY * 0.001;
+    setZoomFactor(prev => Math.max(0, Math.min(1, prev - delta)));
   };
 
   const handleUpload = (files: FileList) => {
@@ -48,27 +72,24 @@ const App: React.FC = () => {
     setTreeState(TreeState.FORMED);
   };
 
-  const dummyToggle = () => {}; 
+  const toggleTreeState = () => {
+      setTreeState(prev => prev === TreeState.CHAOS ? TreeState.FORMED : TreeState.CHAOS);
+      // If we are formed, user might want to inspect photos, if chaos, they are scattered
+      if (treeState === TreeState.FORMED) {
+          setIsPhotoFocused(false);
+      }
+  };
 
   return (
-    <div className="relative w-full h-screen bg-black overflow-hidden touch-none">
+    <div 
+        className="relative w-full h-screen bg-black overflow-hidden touch-none"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerUp}
+        onWheel={handleWheel}
+    >
       
-      {/* Hand Tracking Controller */}
-      <HandController 
-        onStateChange={handleStateChangeFromHand}
-        onZoomChange={(z) => {
-            if (!isPhotoFocused) setZoomFactor(z);
-        }}
-        onRotateChange={(v) => {
-          if (!isPhotoFocused) {
-              handRotationVelocity.current = v;
-          } else {
-              handRotationVelocity.current = 0;
-          }
-        }}
-        onPhotoFocusChange={setIsPhotoFocused}
-      />
-
       {/* 1. Canvas Layer */}
       <Canvas 
         dpr={[1, 1.5]} 
@@ -128,7 +149,7 @@ const App: React.FC = () => {
         <Suspense fallback={<Loader />}>
             <LuxuryTree 
               treeState={treeState} 
-              extraRotationVelocity={handRotationVelocity}
+              extraRotationVelocity={rotationVelocity}
               userTextureUrls={userTextureUrls}
               isPhotoFocused={isPhotoFocused}
             />
@@ -147,12 +168,14 @@ const App: React.FC = () => {
         </EffectComposer>
       </Canvas>
 
-      {/* 2. UI Overlay */}
+      {/* 2. UI Overlay with Manual Controls */}
       <Overlay 
         currentState={treeState} 
-        onToggle={dummyToggle} 
+        onToggle={toggleTreeState} 
         onUpload={handleUpload}
         onGenerate={handleGenerate}
+        zoomLevel={zoomFactor}
+        onZoomChange={setZoomFactor}
       />
       
     </div>
