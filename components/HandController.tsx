@@ -16,7 +16,7 @@ const CHAOS_SPREAD_SPEED_THRESHOLD = 0.015;
 // Interaction Config
 const ROTATION_THRESHOLD = 0.01; // Deadzone
 const ZOOM_THRESHOLD = 0.005;      
-const ROTATION_SENSITIVITY = 20.0; // Increased Sensitivity (was 8.0)
+const ROTATION_SENSITIVITY = 20.0; 
 const ZOOM_SENSITIVITY = 2.0;       
 
 // Throttling for Mobile Performance
@@ -27,8 +27,7 @@ type GestureAction = 'LOCKED_FOCUS' | 'FORM' | 'CHAOS' | 'CONTROL' | 'NONE';
 export const HandController: React.FC<HandControllerProps> = (props) => {
   const { onStateChange, onZoomChange, onRotateChange, onPhotoFocusChange } = props;
   
-  // --- STALE CLOSURE FIX ---
-  // Store the latest props in a ref so the animation loop can always access the freshest callbacks
+  // Keep props fresh for loop
   const propsRef = useRef(props);
   useEffect(() => {
     propsRef.current = props;
@@ -36,7 +35,7 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [status, setStatus] = useState<string>('Initializing...');
+  const [status, setStatus] = useState<string>('Init Camera...');
   
   const requestRef = useRef<number>(0);
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
@@ -59,13 +58,12 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
   useEffect(() => {
     let isActive = true;
 
-    // 1. Initialize Camera Immediately (Parallel Task)
+    // 1. Initialize Camera
     const initCamera = async () => {
       if (!videoRef.current) return;
       try {
         let stream: MediaStream;
         try {
-            // Try user facing camera first
             stream = await navigator.mediaDevices.getUserMedia({
               video: { 
                   facingMode: "user",
@@ -83,43 +81,51 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
             videoRef.current.onloadedmetadata = () => {
                 videoRef.current?.play().catch(console.error);
             };
-            // Start the prediction loop immediately
             requestRef.current = requestAnimationFrame(predictLoop);
         }
       } catch (err) {
         console.error("Camera access denied:", err);
-        if (isActive) setStatus("Camera Denied");
+        if (isActive) setStatus("No Camera");
       }
     };
 
-    // 2. Initialize AI (Parallel Task)
+    // 2. Initialize AI (China Friendly Configuration)
     const initAI = async () => {
       try {
         if(isActive) setStatus("Loading AI...");
         
+        // Use jsDelivr (usually accessible in China) for the WASM binaries
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
         );
         
         if (!isActive) return;
 
-        handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            // Using standard Google storage. If blocked, consider a proxy or local file.
-            modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
-            delegate: "GPU"
-          },
-          runningMode: "VIDEO",
-          numHands: 2,
-          minHandDetectionConfidence: 0.5,
-          minHandPresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5
-        });
+        // CRITICAL: Point to a LOCAL file for the model to avoid Google Storage blocks
+        // The user must place 'hand_landmarker.task' in the public folder
+        const modelPath = "/hand_landmarker.task";
+
+        try {
+            handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+                modelAssetPath: modelPath,
+                delegate: "GPU"
+            },
+            runningMode: "VIDEO",
+            numHands: 2,
+            minHandDetectionConfidence: 0.5,
+            minHandPresenceConfidence: 0.5,
+            minTrackingConfidence: 0.5
+            });
+            if (isActive) setStatus(""); // Success, clear text
+        } catch (e) {
+            console.error("Model load failed. Check if hand_landmarker.task is in public folder.", e);
+            if (isActive) setStatus("Model Missing");
+        }
         
-        if (isActive) setStatus(""); // AI Ready
       } catch (error) {
-        console.error("AI Init Failed (Network?):", error);
-        if (isActive) setStatus("AI Error (VPN?)");
+        console.error("AI Init Failed:", error);
+        if (isActive) setStatus("AI Error");
       }
     };
 
@@ -138,11 +144,8 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
 
   const predictLoop = (time: number) => {
     requestRef.current = requestAnimationFrame(predictLoop);
-
-    // Throttle
     if (time - lastProcessTimeRef.current < DETECTION_INTERVAL) return;
     lastProcessTimeRef.current = time;
-
     detect();
   };
 
@@ -151,11 +154,9 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
     const canvas = canvasRef.current;
     const landmarker = handLandmarkerRef.current;
 
-    // If AI is not ready, we just return (but Camera is still running!)
     if (!landmarker || !video || !canvas) return;
     if (video.paused || video.ended || video.readyState < 2) return;
 
-    // Resize canvas
     if (video.videoWidth > 0 && video.videoHeight > 0) {
         if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
             canvas.width = video.videoWidth;
@@ -165,54 +166,40 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        // Run AI Detection
         const startTimeMs = performance.now();
         const results = landmarker.detectForVideo(video, startTimeMs);
 
-        // Clear Canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
-        // Visuals
         const drawingUtils = new DrawingUtils(ctx);
-        
         if (results.landmarks) {
             for (const landmarks of results.landmarks) {
                 drawingUtils.drawConnectors(landmarks, HandLandmarker.HAND_CONNECTIONS, {
-                    color: '#00ff44', lineWidth: 3
+                    color: '#00ff44', lineWidth: 2
                 });
                 drawingUtils.drawLandmarks(landmarks, {
-                    color: '#FFD700', lineWidth: 0, radius: 3
+                    color: '#FFD700', lineWidth: 0, radius: 2
                 });
             }
         }
 
         const action = processGestures(results.landmarks);
         
-        // Draw HUD
-        if (action !== 'NONE' || status) {
-            ctx.fillStyle = "rgba(0, 10, 5, 0.8)";
-            ctx.roundRect(10, 10, 180, 40, 8);
-            ctx.fill();
-            ctx.strokeStyle = "#FFD700";
-            ctx.lineWidth = 1;
-            ctx.stroke();
-
-            ctx.fillStyle = action === 'LOCKED_FOCUS' ? "#ff3366" : "#00ff44";
-            ctx.font = "bold 16px 'Courier New', monospace";
-            const text = status || `ACT: ${action}`;
-            ctx.fillText(text, 25, 35);
+        // Debug Status
+        if (status || action !== 'NONE') {
+            ctx.fillStyle = "rgba(0,0,0,0.6)";
+            ctx.fillRect(0, 0, 150, 30);
+            ctx.fillStyle = "#00ff00";
+            ctx.font = "14px Arial";
+            ctx.fillText(status || action, 10, 20);
         }
     }
   };
 
   const processGestures = (landmarksArray: NormalizedLandmark[][]): GestureAction => {
-    const now = performance.now();
-    
-    // USE REFS TO CALL LATEST PROPS
     const { onRotateChange, onStateChange, onZoomChange, onPhotoFocusChange } = propsRef.current;
 
     if (!landmarksArray || landmarksArray.length === 0) {
-        // Decay velocity
         smoothedVelocity.current *= 0.8;
         if (Math.abs(smoothedVelocity.current) > 0.001) {
             onRotateChange(smoothedVelocity.current);
@@ -222,7 +209,6 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
         
         pinchState.current.isPinched = false;
         pinchState.current.isLocked = false;
-        pinchState.current.clickCount = 0;
         lastWristPos.current = null;
         handsDistanceHistory.current = [];
         return 'NONE';
@@ -231,8 +217,7 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
     const hand1 = landmarksArray[0];
     const hand2 = landmarksArray.length > 1 ? landmarksArray[1] : null;
 
-    // --- 1. CHAOS (Spread Hands) ---
-    let isSpreading = false;
+    // 1. CHAOS (Two Hands Spreading)
     if (hand2) {
         const h1Wrist = hand1[0];
         const h2Wrist = hand2[0];
@@ -245,66 +230,50 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
             const currentDist = handsDistanceHistory.current[handsDistanceHistory.current.length - 1];
             const prevDist = handsDistanceHistory.current[0]; 
             if (currentDist - prevDist > CHAOS_SPREAD_SPEED_THRESHOLD) {
-                isSpreading = true;
+                onStateChange(TreeState.CHAOS);
+                return 'CHAOS';
             }
         }
     } else {
         handsDistanceHistory.current = [];
     }
 
-    if (isSpreading) {
-        onStateChange(TreeState.CHAOS);
-        return 'CHAOS';
-    }
-
-    // --- 2. FORM (Strict Fist) ---
-    // Refactored: Only triggers when strictly fist.
-    const checkStrictFist = (hand: NormalizedLandmark[]) => {
+    // 2. FORM (Fist)
+    const checkFist = (hand: NormalizedLandmark[]) => {
         const wrist = hand[0];
-        // Index Tip(8), Middle Tip(12), Ring Tip(16), Pinky Tip(20)
-        const fingertipIndices = [8, 12, 16, 20];
-        
-        // Threshold for "Strict" fist: Fingertips must be very close to wrist/palm center.
-        // 0.16 is roughly the radius of a tight fist in normalized coordinates.
-        const STRICT_FOLD_THRESHOLD = 0.16; 
-
-        return fingertipIndices.every(idx => {
-            const tip = hand[idx];
-            const dist = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
-            return dist < STRICT_FOLD_THRESHOLD;
+        const tips = [8, 12, 16, 20];
+        const THRESHOLD = 0.15; 
+        return tips.every(idx => {
+            const d = Math.hypot(hand[idx].x - wrist.x, hand[idx].y - wrist.y);
+            return d < THRESHOLD;
         });
     };
 
-    if (checkStrictFist(hand1) || (hand2 && checkStrictFist(hand2))) {
+    if (checkFist(hand1)) {
         onStateChange(TreeState.FORMED);
         return 'FORM';
     }
 
-    // --- 3. PINCH ---
-    const thumbTip = hand1[4];
-    const indexTip = hand1[8];
-    const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-    const isCurrentlyPinched = pinchDist < 0.06;
+    // 3. PINCH (Zoom / Focus)
+    const thumb = hand1[4];
+    const index = hand1[8];
+    const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+    const isPinched = pinchDist < 0.06;
 
-    if (isCurrentlyPinched && !pinchState.current.isPinched) {
-        const timeSinceRelease = now - pinchState.current.lastPinchReleaseTime;
-        if (timeSinceRelease < DOUBLE_PINCH_TIMING) {
-            pinchState.current.clickCount = 2;
+    if (isPinched && !pinchState.current.isPinched) {
+        const now = performance.now();
+        if (now - pinchState.current.lastPinchReleaseTime < DOUBLE_PINCH_TIMING) {
             pinchState.current.isLocked = true;
-        } else {
-            pinchState.current.clickCount = 1;
         }
     }
-
-    if (!isCurrentlyPinched && pinchState.current.isPinched) {
-        pinchState.current.lastPinchReleaseTime = now;
+    if (!isPinched && pinchState.current.isPinched) {
+        pinchState.current.lastPinchReleaseTime = performance.now();
         if (pinchState.current.isLocked) {
              pinchState.current.isLocked = false;
-             pinchState.current.clickCount = 0;
              onPhotoFocusChange(false); 
         }
     }
-    pinchState.current.isPinched = isCurrentlyPinched;
+    pinchState.current.isPinched = isPinched;
 
     if (pinchState.current.isLocked) {
         onPhotoFocusChange(true);
@@ -312,7 +281,7 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
         return 'LOCKED_FOCUS';
     }
 
-    // --- 4. CONTROL (Spatial Drag) ---
+    // 4. ROTATION & ZOOM (Palm Drag)
     const wrist = hand1[0];
     let dX = 0;
     let dY = 0;
@@ -323,24 +292,21 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
     }
     lastWristPos.current = { x: wrist.x, y: wrist.y };
 
-    let rotInput = 0;
+    // Rotation
     if (Math.abs(dX) > ROTATION_THRESHOLD) {
         const sign = Math.sign(dX);
-        // Normalized input
         const val = Math.abs(dX) - ROTATION_THRESHOLD; 
-        rotInput = sign * Math.pow(val, 1.2) * ROTATION_SENSITIVITY;
+        const rotInput = sign * Math.pow(val, 1.2) * ROTATION_SENSITIVITY;
+        smoothedVelocity.current = smoothedVelocity.current * 0.8 + rotInput * 0.2;
+    } else {
+        smoothedVelocity.current *= 0.8;
     }
-
-    // Snappier response: less history (0.8), more new input (0.2)
-    smoothedVelocity.current = smoothedVelocity.current * 0.8 + rotInput * 0.2;
-    
     onRotateChange(smoothedVelocity.current);
 
+    // Zoom
     if (Math.abs(dY) > ZOOM_THRESHOLD) {
-        // INVERTED ZOOM LOGIC
         const zoomDelta = -dY * ZOOM_SENSITIVITY; 
-        currentZoomLevel.current += zoomDelta;
-        currentZoomLevel.current = Math.max(0, Math.min(1, currentZoomLevel.current));
+        currentZoomLevel.current = Math.max(0, Math.min(1, currentZoomLevel.current + zoomDelta));
         onZoomChange(currentZoomLevel.current);
     }
 
@@ -355,7 +321,6 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
         autoPlay 
         playsInline 
         muted 
-        // Style handled in CSS (opacity)
       />
       <canvas ref={canvasRef} id="webcam-canvas" />
     </div>

@@ -1,4 +1,4 @@
-import React, { useState, Suspense, useRef } from 'react';
+import React, { useState, Suspense, useRef, useCallback } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { PerspectiveCamera, Html, useProgress, Environment } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
@@ -9,6 +9,7 @@ import { GoldenSpirals } from './components/GoldenSpirals';
 import { AmbientParticles } from './components/AmbientParticles';
 import { Overlay } from './components/Overlay';
 import { CameraRig } from './components/CameraRig';
+import { HandController } from './components/HandController';
 
 // Simple Loader Component
 const Loader = () => {
@@ -28,7 +29,7 @@ const App: React.FC = () => {
   const [userTextureUrls, setUserTextureUrls] = useState<string[]>([]);
   const [isPhotoFocused, setIsPhotoFocused] = useState(false);
   
-  // Hand rotation replaced by mouse rotation
+  // Rotation velocity shared by Mouse and Hand
   const rotationVelocity = useRef(0);
   
   // Mouse/Touch Logic
@@ -74,11 +75,31 @@ const App: React.FC = () => {
 
   const toggleTreeState = () => {
       setTreeState(prev => prev === TreeState.CHAOS ? TreeState.FORMED : TreeState.CHAOS);
-      // If we are formed, user might want to inspect photos, if chaos, they are scattered
       if (treeState === TreeState.FORMED) {
           setIsPhotoFocused(false);
       }
   };
+
+  // Hand Controller Callbacks
+  const handleHandStateChange = useCallback((newState: TreeState) => {
+    setTreeState(newState);
+    if (newState === TreeState.FORMED) setIsPhotoFocused(false);
+  }, [treeState]);
+
+  const handleHandRotate = useCallback((velocity: number) => {
+    // Hand input overrides or adds to velocity
+    if (Math.abs(velocity) > 0.0001) {
+        rotationVelocity.current = velocity;
+    }
+  }, []);
+
+  const handleHandZoom = useCallback((factor: number) => {
+    setZoomFactor(factor);
+  }, []);
+
+  const handleHandFocus = useCallback((isFocused: boolean) => {
+    setIsPhotoFocused(isFocused);
+  }, []);
 
   return (
     <div 
@@ -103,15 +124,12 @@ const App: React.FC = () => {
         }}
       >
         <color attach="background" args={['#000000']} />
-        {/* Adjusted fog to ensure visibility at max camera distance (65) */}
         <fog attach="fog" args={['#000000', 20, 100]} />
 
         <PerspectiveCamera makeDefault position={[0, 4, 20]} fov={45} />
         <CameraRig zoomFactor={zoomFactor} />
 
-        {/* --- LIGHTING STRATEGY: HYBRID --- */}
-        
-        {/* 1. Base Lights: Instant load, ensures scene is never pitch black */}
+        {/* Lighting */}
         <hemisphereLight intensity={0.2} color="#ffffff" groundColor="#000000" />
         <ambientLight intensity={0.1} />
         
@@ -128,17 +146,8 @@ const App: React.FC = () => {
         <pointLight position={[-10, 5, -10]} intensity={50} color="#00ff44" distance={40} decay={2} />
         <pointLight position={[0, -5, 10]} intensity={30} color="#ffd700" distance={30} decay={2} />
 
-        {/* 
-            2. High Quality Environment (Async) 
-            Wrapped in its OWN Suspense. If it hangs (network), 
-            it does NOT block the tree or particles from rendering.
-        */}
         <Suspense fallback={null}>
-            <Environment 
-                preset="lobby" 
-                background={false} // Don't show the image as background, just use lighting
-                blur={0.6}         // High blur for "dreamy" look
-            />
+            <Environment preset="lobby" background={false} blur={0.6} />
         </Suspense>
 
         {/* Scene Content */}
@@ -155,20 +164,21 @@ const App: React.FC = () => {
             />
         </Suspense>
 
-        {/* Post Processing for the Glow */}
         <EffectComposer enableNormalPass={false} multisampling={0}>
-            {/* Reduced bloom intensity for softer look */}
-            <Bloom 
-                luminanceThreshold={0.8} 
-                mipmapBlur 
-                intensity={0.8} 
-                radius={0.6}
-            />
+            <Bloom luminanceThreshold={0.8} mipmapBlur intensity={0.8} radius={0.6} />
             <Vignette eskil={false} offset={0.1} darkness={0.8} />
         </EffectComposer>
       </Canvas>
 
-      {/* 2. UI Overlay with Manual Controls */}
+      {/* 2. Hand Controller (Hybrid - runs in background) */}
+      <HandController 
+        onStateChange={handleHandStateChange}
+        onRotateChange={handleHandRotate}
+        onZoomChange={handleHandZoom}
+        onPhotoFocusChange={handleHandFocus}
+      />
+
+      {/* 3. UI Overlay with Manual Controls */}
       <Overlay 
         currentState={treeState} 
         onToggle={toggleTreeState} 
